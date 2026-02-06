@@ -1,4 +1,0 @@
-[submodule "dataset"]
-	path = dataset
-	url = git@github.com:pvcodes/vct-dataset.git
-	branch = main
