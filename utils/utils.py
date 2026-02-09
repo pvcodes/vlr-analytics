@@ -1,21 +1,17 @@
-headers = {
-    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0",
-}
+from pathlib import Path
+from utils.logging import logger
+from utils.config import VCT_STATS_FIELDS
+import csv
 
 
-region = {
-    "na": "north-america",
-    "eu": "europe",
-    "ap": "asia-pacific",
-    "la": "latin-america",
-    "la-s": "la-s",
-    "la-n": "la-n",
-    "oce": "oceania",
-    "kr": "korea",
-    "mn": "mena",
-    "gc": "gc",
-    "br": "Brazil",
-    "cn": "china",
-    "jp": "japan",
-    "col": "collegiate",
-}
+def write_csv(dest_path: Path, rows: list[dict]):
+    if not rows:
+        logger.warning(f"Empty result → skipping write: {dest_path}")
+        return
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(dest_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, VCT_STATS_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)

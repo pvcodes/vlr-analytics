@@ -1,4 +1,3 @@
-# VLR Stats
 VCT_STATS_FIELDS = [
     "player_id",
     "player",
@@ -25,39 +24,10 @@ VCT_STATS_FIELDS = [
     "first_deaths",
 ]
 
-VLR_REQUEST_HEADER = {
-    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0",
-}
 
-
-region = {
-    "na": "north-america",
-    "eu": "europe",
-    "ap": "asia-pacific",
-    "la": "latin-america",
-    "la-s": "la-s",
-    "la-n": "la-n",
-    "oce": "oceania",
-    "kr": "korea",
-    "mn": "mena",
-    "gc": "gc",
-    "br": "Brazil",
-    "cn": "china",
-    "jp": "japan",
-    "cg": "collegiate",
-}
-
-# https://www.vlr.gg/stats/?event_group_id=3&region=na&min_rounds=800&min_rating=2000&agent=all&map_id=all&timespan=all
-# event_group_id
-# region
-# agent
-# map_id
-
-# event_group_id
-# VLR_STATS_EVENT_SERIES_MAX_ID = 89
 VLR_STATS_EVENT_SERIES_MAX_ID = 2
 
-# agent
+# VLR Agents List
 VLR_AGENTS = [
     # "astra",
     # "breach",
@@ -77,10 +47,10 @@ VLR_AGENTS = [
     # "omen",
     # "phoenix",
     # "raze",
-    # "reyna",
+    "reyna",
     "sage",
-    # "skye",
-    # "sova",
+    "skye",
+    "sova",
     # "tejo",
     # "veto",
     # "viper",
@@ -89,7 +59,7 @@ VLR_AGENTS = [
     # "yoru",
 ]
 
-# region
+# VLR Region List
 VLR_REGIONS = [
     "na",
     "eu",
@@ -106,7 +76,7 @@ VLR_REGIONS = [
     # "cg",
 ]
 
-# map_id
+# VLR Region Dict to Region Name
 VLR_REGIONS_DICT = {
     "na": "North America",
     "eu": "Europe",
@@ -123,7 +93,8 @@ VLR_REGIONS_DICT = {
     "cg": "Collegiate",
 }
 
-VLR_MAPS = {
+# VLR Maps Dict to Map Name
+VLR_MAPS_DICT = {
     1: "bind",
     2: "haven",
     # 3: "split",
@@ -138,7 +109,7 @@ VLR_MAPS = {
     # 14: "corrode",
 }
 
-
+# VLR Events Dict to Event Name
 VLR_EVENTS_DICT = {
     89: "valorant_champions_tour_partner_series_2026",
     88: "txg_valorant_circuit",
@@ -223,3 +194,13 @@ VLR_EVENTS_DICT = {
     2: "first_strike",
     1: "ignition_series",
 }
+
+
+# Scraping Configs
+VLR_REQUEST_HEADER = {
+    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0",
+}
+
+VLR_BASE_URL = "https://www.vlr.gg"
+
+ASYNCIO_SEMAPHORE_CONCURRENCY = 5

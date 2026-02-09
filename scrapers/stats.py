@@ -2,15 +2,15 @@ import requests
 from selectolax.parser import HTMLParser
 
 from utils.utils import headers
-from utils.constants import VLR_BASE_URL
+from utils.config import VLR_BASE_URL
 
 
-def vlr_stats(region: str, timespan: str):
+def vlr_stats(VLR_REGIONS_DICT: str, timespan: str):
     url = f"{VLR_BASE_URL}/stats"
     params = {
         "event_group_id": "1",
         "event_id": "1",
-        "region": region,
+        "VLR_REGIONS_DICT": VLR_REGIONS_DICT,
         "country": "all",
         "min_rounds": 200,
         "min_rating": 1550,
@@ -18,7 +18,7 @@ def vlr_stats(region: str, timespan: str):
         "map_id": "all",
         "timespan": "all" if timespan.lower() == "all" else f"{timespan}d",
     }
-    # url = f"{VLR_BASE_URL}/stats/?event_group_id=all&event_id=all&region={region}&country=all&min_rounds=200&min_rating=1550&agent=all&map_id=all"
+    # url = f"{VLR_BASE_URL}/stats/?event_group_id=all&event_id=all&VLR_REGIONS_DICT={VLR_REGIONS_DICT}&country=all&min_rounds=200&min_rating=1550&agent=all&map_id=all"
     # url = (
     #     f"{url}&timespan=all"
     #     if timespan.lower() == "all"

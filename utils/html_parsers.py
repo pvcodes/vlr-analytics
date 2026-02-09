@@ -97,7 +97,7 @@ def extract_date_range(dates_elem) -> str:
 
 
 def extract_region_from_flag(flag_elem) -> str:
-    """Extract region code from flag element class attribute"""
+    """Extract VLR_REGIONS_DICT code from flag element class attribute"""
     if not flag_elem:
         return ""
 

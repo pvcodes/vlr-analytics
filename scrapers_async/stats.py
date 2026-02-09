@@ -1,13 +1,12 @@
 import httpx
 from selectolax.parser import HTMLParser
 
-from utils.utils import headers
-from utils.constants import VLR_BASE_URL
+from utils.config import VLR_BASE_URL, VLR_REQUEST_HEADER
 
 
 async def vlr_stats(
     event_group_id: str,
-    region: str,
+    VLR_REGIONS_DICT: str,
     agent: str,
     map_id: str,
     min_rounds: str = 0,
@@ -17,7 +16,7 @@ async def vlr_stats(
     url = f"{VLR_BASE_URL}/stats"
     params = {
         "event_group_id": event_group_id,
-        "region": region,
+        "VLR_REGIONS_DICT": VLR_REGIONS_DICT,
         "agent": agent,
         "map_id": map_id,
         "min_rounds": min_rounds,
@@ -26,7 +25,9 @@ async def vlr_stats(
     }
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, params=params, headers=headers, timeout=None)
+        resp = await client.get(
+            url, params=params, headers=VLR_REQUEST_HEADER, timeout=None
+        )
 
         if resp.status_code > 299:
             raise Exception(f"Request throwed: {resp.status_code}")
@@ -35,7 +36,6 @@ async def vlr_stats(
 
     result = []
     for item in html.css("tbody tr"):
-
         player = item.text().replace("\t", "").replace("\n", " ").strip().split()
         player_name = player[0]
         org = player[1] if len(player) > 1 else "N/A"

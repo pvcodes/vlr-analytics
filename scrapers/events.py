@@ -2,7 +2,7 @@ import requests
 from selectolax.parser import HTMLParser
 
 from utils.utils import headers
-from utils.constants import VLR_EVENTS_URL
+from utils.config import VLR_EVENTS_URL
 from utils.html_parsers import (
     extract_text_content,
     extract_prize_value,
@@ -58,7 +58,7 @@ def vlr_events(upcoming=True, completed=True, page=1):
             dates = extract_date_range(
                 event_item.css_first(".event-item-desc-item.mod-dates")
             )
-            region = extract_region_from_flag(
+            VLR_REGIONS_DICT = extract_region_from_flag(
                 event_item.css_first(".event-item-desc-item.mod-location .flag")
             )
 
@@ -75,7 +75,7 @@ def vlr_events(upcoming=True, completed=True, page=1):
                     "status": event_status,
                     "prize": prize,
                     "dates": dates,
-                    "region": region,
+                    "VLR_REGIONS_DICT": VLR_REGIONS_DICT,
                     "thumb": thumb,
                     "url_path": full_url,
                 }

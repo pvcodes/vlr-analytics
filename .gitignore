@@ -197,4 +197,5 @@ cython_debug/
 # IGNORES
 .venv
 
-dataset
+data
+scrapers
