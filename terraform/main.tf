@@ -23,7 +23,7 @@ resource "google_project_service" "gcp_services" {
 
 # GCS Buckets (depend on storage API)
 resource "google_storage_bucket" "bronze" {
-  name          = "${var.project_id}-bronze-dl"
+  name          = "${var.project_name}-bronze-dl"
   location      = var.region
   force_destroy = true
 
@@ -42,7 +42,7 @@ resource "google_storage_bucket" "bronze" {
 }
 
 resource "google_storage_bucket" "silver" {
-  name          = "${var.project_id}-silver-dl"
+  name          = "${var.project_name}-silver-dl"
   location      = var.region
   force_destroy = true
 
@@ -52,7 +52,7 @@ resource "google_storage_bucket" "silver" {
 }
 
 # resource "google_storage_bucket" "gold" {
-#   name          = "${var.project_id}-gold-dl"
+#   name          = "${var.project_name}-gold-dl"
 #   location      = var.region
 #   force_destroy = true
 
