@@ -198,4 +198,8 @@ cython_debug/
 .venv
 
 data
-scrapers
+tmp.py
+legacy/
+test.csv
+setup.py
+a.csv

@@ -1,12 +1,14 @@
 import httpx
 from selectolax.parser import HTMLParser
 
-from utils.config import VLR_BASE_URL, VLR_REQUEST_HEADER
+from utils.constants import VLR_BASE_URL, VLR_REQUEST_HEADER
+
+timeout = httpx.Timeout(connect=10.0, timeout=20.0)
 
 
 async def vlr_stats(
     event_group_id: str,
-    VLR_REGIONS_DICT: str,
+    region: str,
     agent: str,
     map_id: str,
     min_rounds: str = 0,
@@ -16,7 +18,7 @@ async def vlr_stats(
     url = f"{VLR_BASE_URL}/stats"
     params = {
         "event_group_id": event_group_id,
-        "VLR_REGIONS_DICT": VLR_REGIONS_DICT,
+        "region": region,
         "agent": agent,
         "map_id": map_id,
         "min_rounds": min_rounds,
@@ -26,7 +28,11 @@ async def vlr_stats(
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            url, params=params, headers=VLR_REQUEST_HEADER, timeout=None
+            url,
+            params=params,
+            headers=VLR_REQUEST_HEADER,
+            timeout=timeout,
+            follow_redirects=True,
         )
 
         if resp.status_code > 299:
