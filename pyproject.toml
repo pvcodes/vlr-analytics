@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "apache-airflow>=3.0.6",
+    "apache-airflow-providers-google>=16.0.0",
     "asyncio>=4.0.0",
     "boto3>=1.42.49",
     "deepmerge>=2.0",
