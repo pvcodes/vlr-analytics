@@ -1,0 +1,6 @@
+project_id         = "your-project-id"
+project_number     = "your-project-number"
+region             = "asia-south1"
+bronze_bucket_name = "your-bronze-bucket-name"
+silver_bucket_name = "your-silver-bucket-name"
+gold_bucket_name   = "vct-analytics-gold"
