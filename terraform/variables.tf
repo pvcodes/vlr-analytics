@@ -28,3 +28,20 @@ variable "gold_bucket_name" {
   type        = string
   description = "GCS bucket for analytical data"
 }
+
+variable "vlr_events_metadata_sql_instance_name" {
+  description = "Cloud SQL instance name"
+  type        = string
+}
+
+variable "vlr_events_metadata_sql_user" {
+  description = "Cloud SQL database user"
+  type        = string
+  default     = "airflow"
+}
+
+variable "vlr_events_metadata_sql_password" {
+  description = "Cloud SQL database password"
+  type        = string
+  sensitive   = true
+}

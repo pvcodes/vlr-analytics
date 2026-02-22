@@ -8,23 +8,18 @@ variable "region" {
   type        = string
 }
 
-variable "bronze_bucket_name" {
-  description = "Name of the bronze GCS bucket"
+variable "composer_env_name" {
+  description = "Cloud Composer environment name"
   type        = string
+  default     = "vct-composer"
 }
 
-variable "vlr_events_metadata_sql_instance_name" {
-  description = "Cloud SQL instance name"
+variable "sql_instance_connection_name" {
+  description = "Cloud SQL instance connection name"
   type        = string
 }
 
 variable "vlr_events_metadata_sql_user" {
   description = "Cloud SQL database user"
   type        = string
-}
-
-variable "vlr_events_metadata_sql_password" {
-  description = "Cloud SQL database password"
-  type        = string
-  sensitive   = true
 }
