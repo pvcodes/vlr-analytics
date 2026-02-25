@@ -1,4 +1,3 @@
-# Your scraper needs permission to write to: gs://vlr-data-lake/bronze/
 resource "google_service_account" "run_job_sa" {
   account_id   = "vlr-scraper-sa"
   display_name = "Cloud Run Job Scraper SA"
@@ -20,7 +19,7 @@ resource "google_cloud_run_v2_job" "scraper_job" {
     template {
 
       service_account = google_service_account.run_job_sa.email
-      max_retries     = 1
+      max_retries     = 3
 
       containers {
 
