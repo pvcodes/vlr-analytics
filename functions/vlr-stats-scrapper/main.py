@@ -1,6 +1,5 @@
 import argparse
 import csv
-from datetime import datetime
 from io import StringIO
 from typing import List, Dict, Optional
 
@@ -58,8 +57,10 @@ def write_csv(
 ):
     if not rows:
         if not empty_ok:
-            raise ValueError(f"Attempted to write empty rows to {blob_path}")
-        logger.warning(f"No rows returned, skipping empty file: {blob_path}")
+            raise ValueError(
+                f"Argument empty_ok is set true, Attempted to write empty rows to {blob_path}"
+            )
+        logger.warning(f"No rows returned, writing empty file: {blob_path}")
 
     if not bucket_name:
         raise ValueError("Bucket name is required.")

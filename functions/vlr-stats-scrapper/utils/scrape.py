@@ -1,17 +1,9 @@
-import httpx
+import requests
 
 from selectolax.parser import HTMLParser
 from typing import List, Dict
 
-from utils.constants import VLR_BASE_URL, VLR_REQUEST_HEADER
-
-timeout = httpx.Timeout(connect=10.0, timeout=20.0)
-
-client = httpx.Client(
-    headers=VLR_REQUEST_HEADER,
-    timeout=timeout,
-    follow_redirects=True,
-)
+from utils.constants import VLR_BASE_URL, VLR_REQUEST_HEADERS
 
 
 def vlr_stats(
@@ -19,10 +11,22 @@ def vlr_stats(
     region: str,
     agent: str,
     map_id: str,
-    min_rounds: int = 0,
-    min_rating: float = 0,
+    min_rounds: str = 0,
+    min_rating: str = 0,
     timespan: str = "all",
 ) -> List[Dict]:
+    session = requests.Session()
+
+    # Step 1: get a fresh session cookie
+    url = f"{VLR_BASE_URL}/stats"
+    session.get(
+        url=url,
+        headers=VLR_REQUEST_HEADERS,
+    )
+    # session now has PHPSESSID automatically
+    # abok=1 tells the site to skip the cookie consent banner
+    session.cookies.set("abok", "1")
+
     url = f"{VLR_BASE_URL}/stats"
 
     params = {
@@ -34,14 +38,12 @@ def vlr_stats(
         "min_rating": min_rating,
         "timespan": "all" if timespan.lower() == "all" else f"{timespan}d",
     }
-
-    try:
-        resp = client.get(url, params=params)
-    except httpx.RequestError as exc:
-        raise RuntimeError(f"Request failed: {exc}") from exc
-
-    if resp.status_code >= 300:
-        raise RuntimeError(f"Request failed with status: {resp.status_code}")
+    resp = session.get(
+        url=url,
+        params=params,
+        headers=VLR_REQUEST_HEADERS,
+    )
+    resp.raise_for_status()
 
     html = HTMLParser(resp.text)
 
