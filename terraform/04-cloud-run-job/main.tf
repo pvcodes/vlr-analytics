@@ -15,11 +15,12 @@ resource "google_cloud_run_v2_job" "scraper_job" {
   location = var.region
 
   template {
+    parallelism = 1
+    task_count  = 1
     template {
 
       service_account = google_service_account.run_job_sa.email
-
-      max_retries = 1
+      max_retries     = 1
 
       containers {
 
