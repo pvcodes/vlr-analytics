@@ -1,249 +1,247 @@
 """
-DAG: vlr_stats_scrape
-version: 10
+DAG:     vlr_stats_scraper
+Version: 8.0 — metadata-driven dynamic fan-out
+Runtime: Airflow 3.1.x · GCP Composer 3
+Flow:
+    fetch_configs → execute_cloud_run.expand
+                        → check_gcs_landed.expand
+                            → mark_scraped.expand
 """
+
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
 
-from airflow.sdk import dag, task
-from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+from airflow.sdk import dag, task, get_current_context, PokeReturnValue
+from airflow.exceptions import AirflowSkipException
 
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  CONSTANTS                                                   ║
+# ╚══════════════════════════════════════════════════════════════╝
 GCP_PROJECT_ID = "vlr-analytics"
 GCP_REGION = "asia-south1"
 GCP_CONN_ID = "google_cloud_default"
-
-CLOUD_RUN_JOB_NAME = "vlr-stats-scraper"
-
+CLOUD_RUN_JOB = "vlr-stats-scraper"
 GCS_BUCKET = "vlr-data-lake"
-GCS_BRONZE_PREFIX = "bronze"
-
+GCS_PREFIX = "bronze"
 METADATA_CONN_ID = "vlr_metadata_postgres"
 METADATA_TABLE = "vlr_events_metadata"
-METADATA_BATCH_SIZE = 50
+BATCH_SIZE = 50
+
+# Pools — create via Admin → Pools
+CLOUD_RUN_POOL = "cloud_run_pool"  # slots = 5
+GCS_SENSOR_POOL = "gcs_sensor_pool"  # slots = 10
+DB_POOL = "postgres_pool"  # slots = 5
+
+MAX_PARALLEL_CR = 3
+SENSOR_POKE_SEC = 30
+SENSOR_TIMEOUT_SEC = 900  # 15 min
+CR_TIMEOUT_SEC = 7200  # 2 h
 
 DEFAULT_ARGS = {
     "owner": "pvcodes",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 5,
+    "retry_delay": timedelta(minutes=2),
     "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=10),
     "execution_timeout": timedelta(hours=2),
 }
 
-INTERVAL = "0 * * * *"
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  HELPERS                                                     ║
+# ╚══════════════════════════════════════════════════════════════╝
+def _label(config: dict) -> str:
+    return (
+        f"{config['event_id']}/{config['region']}/"
+        f"{config['map_name']}/{config['agent']}"
+    )
 
 
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  DAG                                                         ║
+# ╚══════════════════════════════════════════════════════════════╝
 @dag(
-    dag_id="vlr_stats_scrapper",
-    schedule=INTERVAL,
+    dag_id="vlr_stats_scraper",
+    schedule="0 * * * *",
     start_date=datetime(2025, 1, 1),
     catchup=False,
     max_active_runs=1,
-    max_active_tasks=4,
+    max_active_tasks=10,
     default_args=DEFAULT_ARGS,
     tags=["vlr", "scraping", "cloud-run"],
+    doc_md=__doc__,
 )
 def vlr_stats_scrape_dag():
 
-    # -----------------------------------------------------------------------
-    # STEP 1: Read unscraped metadata rows
-    # -----------------------------------------------------------------------
-    read_unscraped_rows = SQLExecuteQueryOperator(
-        task_id="read_unscraped_rows",
-        conn_id=METADATA_CONN_ID,
-        sql=f"""
-            SELECT id, event_id, map_id, map_name, region_abbr, agent
-            FROM {METADATA_TABLE}
-            WHERE is_completed = TRUE AND is_scrapped = FALSE
-            ORDER BY event_id, map_id, map_name, region_abbr, agent
-            LIMIT {METADATA_BATCH_SIZE};
-        """,
-        handler=lambda cursor: cursor.fetchall(),
-        return_last=True,
-    )
-
-    # -----------------------------------------------------------------------
+    # ── 1. FETCH CONFIGS ──────────────────────────────────────
     @task
-    def format_rows(rows) -> list[dict]:
-        log.info("Raw rows received: %s", rows)
-        if not rows:
-            return []
-        return [
-            {
-                "row_id": row[0],
-                "event_id": row[1],
-                "map_id": row[2],
-                "map_name": row[3],
-                "region": row[4],
-                "agent": row[5],
-            }
-            for row in rows
-        ]
-
-    formatted_rows = format_rows(read_unscraped_rows.output)
-
-    # -----------------------------------------------------------------------
-    # STEP 1B: Short-circuit if no rows to process
-    # -----------------------------------------------------------------------
-    @task.short_circuit
-    def check_has_rows(rows: list) -> bool:
-        if not rows:
-            log.info("No unscraped rows found. Short-circuiting DAG run.")
-            return False
-        log.info("Found %d rows to process.", len(rows))
-        return True
-
-    should_continue = check_has_rows(formatted_rows)
-
-    # -----------------------------------------------------------------------
-    # STEP 2: Trigger Cloud Run (Mapped)
-    # -----------------------------------------------------------------------
-    @task(
-        map_index_template="{{ task.op_kwargs['event_id'] }}-{{ task.op_kwargs['region'] }}-{{ task.op_kwargs['map_name'] }}-{{ task.op_kwargs['agent'] }}"
-    )
-    def trigger_cloud_run(
-        row_id: int,
-        event_id: int,
-        map_id: int,
-        map_name: str,
-        region: str,
-        agent: str,
-    ) -> dict:
-
-        from airflow.sdk import get_current_context
-        from airflow.providers.google.cloud.hooks.gcs import GCSHook
-        from airflow.providers.google.cloud.hooks.cloud_run import CloudRunHook
-
-        ctx = get_current_context()
-        ds = ctx["ds"]
-
-        object_path = (
-            f"{GCS_BRONZE_PREFIX}/"
-            f"event_id={event_id}/"
-            f"region={region}/"
-            f"map={map_name}/"
-            f"agent={agent}/"
-            f"snapshot_date={ds}/"
-            f"data.csv"
-        )
-
-        gcs_hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
-
-        if gcs_hook.exists(bucket_name=GCS_BUCKET, object_name=object_path):
-            log.info("GCS object already exists. Skipping Cloud Run: %s", object_path)
-            return {
-                "row_id": row_id,
-                "object_path": object_path,
-                "event_id": event_id,
-                "region": region,
-                "map_name": map_name,
-                "agent": agent,
-            }
-
-        hook = CloudRunHook(gcp_conn_id=GCP_CONN_ID)
-        hook.execute_job(
-            job_name=CLOUD_RUN_JOB_NAME,
-            project_id=GCP_PROJECT_ID,
-            region=GCP_REGION,
-            overrides={
-                "container_overrides": [
-                    {
-                        "args": [
-                            f"--event_id={event_id}",
-                            f"--map_id={map_id}",
-                            f"--map_name={map_name}",
-                            f"--region={region}",
-                            f"--agent={agent}",
-                            f"--destination_bucket_name={GCS_BUCKET}",
-                            f"--snapshot_date={ds}",
-                        ]
-                    }
-                ]
-            },
-        )
-
-        return {
-            "row_id": row_id,
-            "object_path": object_path,
-            "event_id": event_id,
-            "region": region,
-            "map_name": map_name,
-            "agent": agent,
-        }
-
-    run_results = trigger_cloud_run.expand_kwargs(formatted_rows)
-
-    # -----------------------------------------------------------------------
-    # STEP 3: Wait for GCS Object (Mapped)
-    # -----------------------------------------------------------------------
-    @task(
-        map_index_template="{{ task.op_kwargs['result']['event_id'] }}-{{ task.op_kwargs['result']['region'] }}-{{ task.op_kwargs['result']['map_name'] }}-{{ task.op_kwargs['result']['agent'] }}"
-    )
-    def wait_for_gcs_file(result: dict) -> dict:
-
-        from airflow.providers.google.cloud.hooks.gcs import GCSHook
-        import time
-
-        object_path = result["object_path"]
-        hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
-
-        timeout = 900
-        poke = 30
-        waited = 0
-
-        while waited < timeout:
-            if hook.exists(bucket_name=GCS_BUCKET, object_name=object_path):
-                return {"row_id": result["row_id"]}
-            time.sleep(poke)
-            waited += poke
-
-        raise TimeoutError(f"{object_path} not found after {timeout}s")
-
-    completed_rows = wait_for_gcs_file.expand(result=run_results)
-
-    # -----------------------------------------------------------------------
-    # STEP 4A: Collect Completed IDs
-    # -----------------------------------------------------------------------
-    @task
-    def collect_completed_ids(rows: list[dict]) -> list[int]:
-        return [r["row_id"] for r in rows if r]
-
-    row_ids = collect_completed_ids(completed_rows)
-
-    # -----------------------------------------------------------------------
-    # STEP 4B: Bulk Update (Single DB Connection)
-    # -----------------------------------------------------------------------
-    @task
-    def mark_rows_scraped_bulk(row_ids: list[int]):
-
-        if not row_ids:
-            return
-
+    def fetch_configs(ds: str = None) -> list[dict]:
+        """Query unscraped rows, return one config dict per row."""
         from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-        hook = PostgresHook(postgres_conn_id=METADATA_CONN_ID)
-
-        hook.run(
-            sql=f"""
-                UPDATE {METADATA_TABLE}
-                SET
-                    is_scrapped = TRUE,
-                    last_scraped = NOW()
-                WHERE id = ANY(%(ids)s)
-                  AND is_completed = TRUE;
-            """,
-            parameters={"ids": row_ids},
-            autocommit=True,
+        rows = PostgresHook(postgres_conn_id=METADATA_CONN_ID).get_records(
+            f"""
+            SELECT id, event_id, map_id, map_name, region_abbr, agent
+            FROM   {METADATA_TABLE}
+            WHERE  is_completed = TRUE
+              AND  is_scrapped  = FALSE
+            ORDER  BY event_id, map_id, map_name, region_abbr, agent
+            LIMIT  {BATCH_SIZE};
+            """
         )
 
-    # -----------------------------------------------------------------------
-    # Task Dependencies
-    # -----------------------------------------------------------------------
-    should_continue >> run_results
-    mark_rows_scraped_bulk(row_ids)
+        if not rows:
+            raise AirflowSkipException("No unscraped rows — skipping entire run")
+
+        configs: list[dict] = []
+        for r in rows:
+            event_id = r[1]
+            map_id = r[2]
+            map_name = r[3]
+            region = r[4]
+            agent = r[5]
+
+            configs.append(
+                {
+                    "row_id": r[0],
+                    "event_id": event_id,
+                    "map_id": map_id,
+                    "map_name": map_name,
+                    "region": region,
+                    "agent": agent,
+                    "gcs_object": (
+                        f"{GCS_PREFIX}/event_id={event_id}/region={region}/"
+                        f"map={map_name}/agent={agent}/"
+                        f"snapshot_date={ds}/data.csv"
+                    ),
+                    "ds": ds,
+                }
+            )
+
+        log.info("Fetched %d config(s) to process", len(configs))
+        return configs
+
+    # ── 2. EXECUTE CLOUD RUN ──────────────────────────────────
+    @task(
+        pool=CLOUD_RUN_POOL,
+        max_active_tis_per_dagrun=MAX_PARALLEL_CR,
+        retries=2,
+        retry_delay=timedelta(minutes=3),
+    )
+    def execute_cloud_run(config: dict) -> dict:
+        """Trigger Cloud Run job and block until it finishes.
+        Idempotent: skips if the GCS file already exists."""
+        from google.cloud import run_v2
+        from airflow.providers.google.cloud.hooks.gcs import GCSHook
+
+        label = _label(config)
+
+        # ── idempotency: skip if file already landed ──
+        if GCSHook(gcp_conn_id=GCP_CONN_ID).exists(
+            bucket_name=GCS_BUCKET, object_name=config["gcs_object"]
+        ):
+            log.info("[%s] File already in GCS — skipping Cloud Run", label)
+            config["skipped"] = True
+            return config
+
+        # ── trigger Cloud Run ──
+        overrides = run_v2.RunJobRequest.Overrides(
+            container_overrides=[
+                run_v2.RunJobRequest.Overrides.ContainerOverride(
+                    args=[
+                        f"--event_id={config['event_id']}",
+                        f"--map_id={config['map_id']}",
+                        f"--map_name={config['map_name']}",
+                        f"--region={config['region']}",
+                        f"--agent={config['agent']}",
+                        f"--destination_bucket_name={GCS_BUCKET}",
+                        f"--snapshot_date={config['ds']}",
+                    ]
+                )
+            ]
+        )
+
+        job_path = (
+            f"projects/{GCP_PROJECT_ID}"
+            f"/locations/{GCP_REGION}"
+            f"/jobs/{CLOUD_RUN_JOB}"
+        )
+
+        operation = run_v2.JobsClient().run_job(
+            run_v2.RunJobRequest(name=job_path, overrides=overrides)
+        )
+        log.info("[%s] Cloud Run triggered — waiting …", label)
+
+        execution = operation.result(timeout=CR_TIMEOUT_SEC)
+
+        condition = (
+            execution.conditions[-1].type_ if execution.conditions else "UNKNOWN"
+        )
+        log.info("[%s] Cloud Run completed — condition=%s", label, condition)
+
+        config["skipped"] = False
+        return config
+
+    # ── 3. CHECK GCS LANDING ──────────────────────────────────
+    @task.sensor(
+        poke_interval=SENSOR_POKE_SEC,
+        timeout=SENSOR_TIMEOUT_SEC,
+        mode="reschedule",
+        exponential_backoff=True,
+        pool=GCS_SENSOR_POOL,
+    )
+    def check_gcs_landed(config: dict) -> PokeReturnValue:
+        """Poke GCS until the expected file exists.
+        mode=reschedule frees the worker slot between pokes."""
+        from airflow.providers.google.cloud.hooks.gcs import GCSHook
+
+        if config.get("skipped"):
+            return PokeReturnValue(is_done=True, xcom_value=config)
+
+        exists = GCSHook(gcp_conn_id=GCP_CONN_ID).exists(
+            bucket_name=GCS_BUCKET, object_name=config["gcs_object"]
+        )
+
+        if exists:
+            log.info(
+                "[row=%s] ✓ GCS confirmed: %s",
+                config["row_id"],
+                config["gcs_object"],
+            )
+            return PokeReturnValue(is_done=True, xcom_value=config)
+
+        log.info("[row=%s] waiting for: %s", config["row_id"], config["gcs_object"])
+        return PokeReturnValue(is_done=False)
+
+    # ── 4. MARK SCRAPED ───────────────────────────────────────
+    @task(pool=DB_POOL, retries=3)
+    def mark_scraped(config: dict) -> None:
+        """Final step: set is_scrapped=TRUE and last_scraped=NOW()."""
+        from airflow.providers.postgres.hooks.postgres import PostgresHook
+
+        PostgresHook(postgres_conn_id=METADATA_CONN_ID).run(
+            f"""
+            UPDATE {METADATA_TABLE}
+            SET    is_scrapped  = TRUE,
+                   last_scraped = NOW()
+            WHERE  id = %s
+              AND  is_completed = TRUE;
+            """,
+            parameters=(config["row_id"],),
+        )
+        log.info("[row=%s] ✓ SCRAPED — %s", config["row_id"], _label(config))
+
+    # ╔══════════════════════════════════════════════════════════╗
+    # ║  WIRING                                                  ║
+    # ╚══════════════════════════════════════════════════════════╝
+    configs = fetch_configs()
+    cr_done = execute_cloud_run.expand(config=configs)
+    gcs_ok = check_gcs_landed.expand(config=cr_done)
+    mark_scraped.expand(config=gcs_ok)
 
 
 vlr_stats_scrape_dag()
