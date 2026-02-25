@@ -48,4 +48,4 @@ VCT_STATS_FIELDS = [
 ]
 
 
-GCS_BRONZE_BUCKET_NAME = "vct-analytics-bronze"
+GCS_DATALAKE_BUCKET_NAME = "vlr-data-lake"

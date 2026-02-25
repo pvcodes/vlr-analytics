@@ -8,7 +8,9 @@ from google.cloud import storage
 
 from utils.scrape import vlr_stats
 from utils.logger import logger
-from utils.constants import VCT_STATS_FIELDS, GCS_BRONZE_BUCKET_NAME, ENVIRONMENT
+from utils.constants import VCT_STATS_FIELDS, GCS_DATALAKE_BUCKET_NAME, ENVIRONMENT
+
+import json
 
 
 def parse_args():
@@ -19,11 +21,12 @@ def parse_args():
     parser.add_argument("--agent", required=True)
     parser.add_argument("--map_id", required=True)
     parser.add_argument("--map_name", required=True)
+    parser.add_argument("--snapshot_date", required=True)
 
     parser.add_argument("--min_rounds", type=int, default=0)
     parser.add_argument("--min_rating", type=float, default=0)
     parser.add_argument("--timespan", default="all")
-    parser.add_argument("--destination_bucket_name", default=GCS_BRONZE_BUCKET_NAME)
+    parser.add_argument("--destination_bucket_name", default=GCS_DATALAKE_BUCKET_NAME)
 
     return parser.parse_args()
 
@@ -36,6 +39,7 @@ def validate_required_args(args):
 
 def build_blob_path(event_id, region, map_name, agent, snapshot_date) -> str:
     return (
+        f"bronze/"
         f"event_id={event_id}/"
         f"region={region}/"
         f"map={map_name}/"
@@ -55,8 +59,7 @@ def write_csv(
     if not rows:
         if not empty_ok:
             raise ValueError(f"Attempted to write empty rows to {blob_path}")
-        logger.warning(f"No rows returned, skipping write: {blob_path}")
-        return
+        logger.warning(f"No rows returned, skipping empty file: {blob_path}")
 
     if not bucket_name:
         raise ValueError("Bucket name is required.")
@@ -100,13 +103,12 @@ def main():
     args = parse_args()
     validate_required_args(args)
 
-    today = datetime.now().strftime("%Y-%m-%d")
     blob_path = build_blob_path(
         event_id=args.event_id,
         region=args.region,
         map_name=args.map_name,
         agent=args.agent,
-        snapshot_date=today,
+        snapshot_date=args.snapshot_date,
     )
 
     logger.info(
@@ -134,10 +136,30 @@ def main():
         empty_ok=True,
     )
 
+    print(
+        json.dumps(
+            {
+                "success": True,
+                "blob_path": blob_path,
+                "rows_written": len(result),
+            }
+        ),
+        flush=True,
+    )
+
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        print(
+            json.dumps(
+                {
+                    "success": False,
+                    "error": str(e),
+                }
+            ),
+            flush=True,
+        )
         logger.exception(f"Fatal error: {e}")
         raise

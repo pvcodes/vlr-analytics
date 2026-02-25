@@ -1,0 +1,1 @@
+gcloud builds submit --tag asia-south1-docker.pkg.dev/vlr-analytics/vlr-repo/vlr-analytics-scraper:latest
