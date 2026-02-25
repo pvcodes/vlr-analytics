@@ -156,7 +156,7 @@ cp .env.example .env
 
 ### Deploy to Cloud Run Job
 
-Deploy the Cloud Run Job manually or via Terraform [here](../../terraform/04-cloud-run-job/README.md)
+Deploy the Cloud Run Job manually or via Terraform [here](../../terraform/README.md#04---cloud-run-job).
 
 ```bash
 gcloud run deploy vlr-stats-scraper \
