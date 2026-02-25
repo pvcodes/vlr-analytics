@@ -1,5 +1,6 @@
 """
 DAG: vlr_stats_scrape
+version: 10
 """
 
 import logging
@@ -40,8 +41,8 @@ INTERVAL = "0 * * * *"
     schedule=INTERVAL,
     start_date=datetime(2025, 1, 1),
     catchup=False,
-    max_active_runs=2,
-    max_active_tasks=16,
+    max_active_runs=1,
+    max_active_tasks=4,
     default_args=DEFAULT_ARGS,
     tags=["vlr", "scraping", "cloud-run"],
 )
@@ -66,7 +67,8 @@ def vlr_stats_scrape_dag():
 
     # -----------------------------------------------------------------------
     @task
-    def format_rows(rows: list) -> list[dict]:
+    def format_rows(rows) -> list[dict]:
+        log.info("Raw rows received: %s", rows)
         if not rows:
             return []
         return [
@@ -82,6 +84,19 @@ def vlr_stats_scrape_dag():
         ]
 
     formatted_rows = format_rows(read_unscraped_rows.output)
+
+    # -----------------------------------------------------------------------
+    # STEP 1B: Short-circuit if no rows to process
+    # -----------------------------------------------------------------------
+    @task.short_circuit
+    def check_has_rows(rows: list) -> bool:
+        if not rows:
+            log.info("No unscraped rows found. Short-circuiting DAG run.")
+            return False
+        log.info("Found %d rows to process.", len(rows))
+        return True
+
+    should_continue = check_has_rows(formatted_rows)
 
     # -----------------------------------------------------------------------
     # STEP 2: Trigger Cloud Run (Mapped)
@@ -122,6 +137,10 @@ def vlr_stats_scrape_dag():
             return {
                 "row_id": row_id,
                 "object_path": object_path,
+                "event_id": event_id,
+                "region": region,
+                "map_name": map_name,
+                "agent": agent,
             }
 
         hook = CloudRunHook(gcp_conn_id=GCP_CONN_ID)
@@ -149,6 +168,10 @@ def vlr_stats_scrape_dag():
         return {
             "row_id": row_id,
             "object_path": object_path,
+            "event_id": event_id,
+            "region": region,
+            "map_name": map_name,
+            "agent": agent,
         }
 
     run_results = trigger_cloud_run.expand_kwargs(formatted_rows)
@@ -156,7 +179,9 @@ def vlr_stats_scrape_dag():
     # -----------------------------------------------------------------------
     # STEP 3: Wait for GCS Object (Mapped)
     # -----------------------------------------------------------------------
-    @task
+    @task(
+        map_index_template="{{ task.op_kwargs['result']['event_id'] }}-{{ task.op_kwargs['result']['region'] }}-{{ task.op_kwargs['result']['map_name'] }}-{{ task.op_kwargs['result']['agent'] }}"
+    )
     def wait_for_gcs_file(result: dict) -> dict:
 
         from airflow.providers.google.cloud.hooks.gcs import GCSHook
@@ -214,6 +239,10 @@ def vlr_stats_scrape_dag():
             autocommit=True,
         )
 
+    # -----------------------------------------------------------------------
+    # Task Dependencies
+    # -----------------------------------------------------------------------
+    should_continue >> run_results
     mark_rows_scraped_bulk(row_ids)
 
 
