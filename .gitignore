@@ -205,7 +205,7 @@ setup.py
 *.csv
 configs/
 tmp/
-
+utils/
 pipelines/
 notebooks/
 workflow*.md
