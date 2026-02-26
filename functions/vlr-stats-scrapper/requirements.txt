@@ -1,4 +1,5 @@
 google-cloud-logging>=3.13.0
 google-cloud-storage>=3.9.0
+google-cloud-pubsub==2.21.1
 selectolax>=0.4.6
 requests>=2.32.5

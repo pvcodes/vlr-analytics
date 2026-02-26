@@ -4,6 +4,7 @@ from io import StringIO
 from typing import List, Dict, Optional
 
 from google.cloud import storage
+from google.cloud import pubsub_v1
 
 from utils.scrape import vlr_stats
 from utils.logger import logger
@@ -12,9 +13,15 @@ from utils.constants import VCT_STATS_FIELDS, GCS_DATALAKE_BUCKET_NAME, ENVIRONM
 import json
 
 
+# ─────────────────────────────────────────────────────────────
+# ARGUMENTS
+# ─────────────────────────────────────────────────────────────
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Scrape VLR stats and upload to GCS")
 
+    parser.add_argument("--row_id", required=True)
     parser.add_argument("--event_id", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument("--agent", required=True)
@@ -36,6 +43,11 @@ def validate_required_args(args):
             raise ValueError(f"Missing required argument: {field}")
 
 
+# ─────────────────────────────────────────────────────────────
+# GCS WRITE
+# ─────────────────────────────────────────────────────────────
+
+
 def build_blob_path(event_id, region, map_name, agent, snapshot_date) -> str:
     return (
         f"bronze/"
@@ -48,6 +60,20 @@ def build_blob_path(event_id, region, map_name, agent, snapshot_date) -> str:
     )
 
 
+def upload_blob_to_gcs(
+    bucket_name: str,
+    destination_blob_name: str,
+    data: str,
+    content_type: str = "text/csv",
+) -> None:
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(destination_blob_name)
+
+    blob.upload_from_string(data, content_type=content_type)
+    logger.info(f"Upload complete: gs://{bucket_name}/{destination_blob_name}")
+
+
 def write_csv(
     blob_path: str,
     rows: List[Dict],
@@ -58,7 +84,7 @@ def write_csv(
     if not rows:
         if not empty_ok:
             raise ValueError(
-                f"Argument empty_ok is set true, Attempted to write empty rows to {blob_path}"
+                f"Argument empty_ok is false, attempted to write empty rows to {blob_path}"
             )
         logger.warning(f"No rows returned, writing empty file: {blob_path}")
 
@@ -86,81 +112,90 @@ def write_csv(
         logger.info(f"Wrote {len(rows)} rows → {fpath}")
 
 
-def upload_blob_to_gcs(
-    bucket_name: str,
-    destination_blob_name: str,
-    data: str,
-    content_type: str = "text/csv",
-) -> None:
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(destination_blob_name)
+# ─────────────────────────────────────────────────────────────
+# PUBSUB COMPLETION EVENT
+# ─────────────────────────────────────────────────────────────
 
-    blob.upload_from_string(data, content_type=content_type)
-    logger.info(f"Upload complete: gs://{bucket_name}/{destination_blob_name}")
+
+def publish_completion_event(row_id: int, blob_path: str, success: bool):
+    publisher = pubsub_v1.PublisherClient()
+
+    topic_path = publisher.topic_path("vlr-analytics", "vlr-stats-scraper-completion")
+
+    payload = {
+        "row_id": row_id,
+        "blob_path": blob_path,
+        "success": success,
+    }
+
+    future = publisher.publish(topic_path, json.dumps(payload).encode("utf-8"))
+
+    future.result()  # IMPORTANT: wait until message is actually sent
+
+
+# ─────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────
 
 
 def main():
-    args = parse_args()
-    validate_required_args(args)
+    args = None
+    blob_path = ""
 
-    blob_path = build_blob_path(
-        event_id=args.event_id,
-        region=args.region,
-        map_name=args.map_name,
-        agent=args.agent,
-        snapshot_date=args.snapshot_date,
-    )
+    try:
+        args = parse_args()
+        validate_required_args(args)
 
-    logger.info(
-        f"Scraping event={args.event_id} region={args.region} "
-        f"agent={args.agent} map={args.map_name} timespan={args.timespan}"
-    )
+        blob_path = build_blob_path(
+            event_id=args.event_id,
+            region=args.region,
+            map_name=args.map_name,
+            agent=args.agent,
+            snapshot_date=args.snapshot_date,
+        )
 
-    result = vlr_stats(
-        event_group_id=args.event_id,
-        region=args.region,
-        agent=args.agent,
-        map_id=args.map_id,
-        min_rounds=args.min_rounds,
-        min_rating=args.min_rating,
-        timespan=args.timespan,
-    )
+        logger.info(
+            f"Scraping event={args.event_id} region={args.region} "
+            f"agent={args.agent} map={args.map_name} timespan={args.timespan}"
+        )
 
-    logger.info(f"Scrape returned {len(result)} rows")
+        result = vlr_stats(
+            event_group_id=args.event_id,
+            region=args.region,
+            agent=args.agent,
+            map_id=args.map_id,
+            min_rounds=args.min_rounds,
+            min_rating=args.min_rating,
+            timespan=args.timespan,
+        )
 
-    write_csv(
-        blob_path=blob_path,
-        rows=result,
-        fields=VCT_STATS_FIELDS,
-        bucket_name=args.destination_bucket_name,
-        empty_ok=True,
-    )
+        logger.info(f"Scrape returned {len(result)} rows")
 
-    print(
-        json.dumps(
-            {
-                "success": True,
-                "blob_path": blob_path,
-                "rows_written": len(result),
-            }
-        ),
-        flush=True,
-    )
+        write_csv(
+            blob_path=blob_path,
+            rows=result,
+            fields=VCT_STATS_FIELDS,
+            bucket_name=args.destination_bucket_name,
+            empty_ok=True,
+        )
+
+        publish_completion_event(
+            row_id=int(args.row_id),
+            blob_path=blob_path,
+            success=True,
+        )
+
+    except Exception as e:
+        if args and hasattr(args, "row_id"):
+            publish_completion_event(
+                row_id=int(args.row_id),
+                blob_path=blob_path,
+                success=False,
+            )
+
+        logger.exception(f"Fatal error: {e}")
+        raise
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(
-            json.dumps(
-                {
-                    "success": False,
-                    "error": str(e),
-                }
-            ),
-            flush=True,
-        )
-        logger.exception(f"Fatal error: {e}")
-        raise
+    main()
