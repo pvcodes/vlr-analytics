@@ -5,6 +5,8 @@ variable "region" {
   description = "Google Cloud Base Region"
   default     = "asia-south1"
 }
-variable "datalake_bucket_name" {
-  description = "VLR Analytics Data lake bucket name"
+
+variable "dataproc_service_account_id" {
+  type    = string
+  default = "dataproc-serverless-sa"
 }

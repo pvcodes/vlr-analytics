@@ -198,4 +198,17 @@ terraform apply
 
 ---
 
+### 06 - Dataproc Server
+
+<DESCRIPTION>
+
+```bash
+cd 06-dataproc
+terraform init
+terraform apply
+```
+
+> email : `dataproc_serverless_sa_email = "vlr-silver-dp@vlr-analytics.iam.gserviceaccount.com"`
+---
+
 <!-- All infrastructure resources provisioned here are required for execution of Bronze ingestion DAGs and downstream analytical processing. -->
