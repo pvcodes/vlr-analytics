@@ -1,0 +1,14 @@
+[project]
+name = "vlr-silver-transform"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "pyspark>=4.1.1",
+]

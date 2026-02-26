@@ -1,0 +1,1 @@
+gsutil cp main.py gs://vlr-code-bucket/vlr-silver-transform/main.py

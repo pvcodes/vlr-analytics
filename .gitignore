@@ -213,3 +213,6 @@ workflow*.md
 README.md
 .DS_Store
 **/*/.DS_Store
+
+
+x.ipynb
