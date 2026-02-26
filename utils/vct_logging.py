@@ -9,7 +9,7 @@ formatter = logging.Formatter(
 )
 
 # ---- File handler ----
-file_handler = logging.FileHandler("scraping.log", encoding="utf-8")
+file_handler = logging.FileHandler("logs/scraping.log", encoding="utf-8")
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(formatter)
 

@@ -198,8 +198,12 @@ cython_debug/
 .venv
 
 data
-tmp.py
+tmp/
 legacy/
-test.csv
+*.csv
 setup.py
-a.csv
+
+workflow*.md
+x.ipynb
+
+notebooks/

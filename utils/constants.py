@@ -25,88 +25,38 @@ VCT_STATS_FIELDS = [
 ]
 
 
-VLR_STATS_EVENT_SERIES_MAX_ID = 2
-
-# VLR Agents List
-VLR_AGENTS = [
-    # "astra",
-    # "breach",
-    # "brimstone",
-    # "chamber",
-    # "clove",
-    # "cypher",
-    # "deadlock",
-    # "fade",
-    # "gekko",
-    # "harbor",
-    # "iso",
-    "jett",
-    # "kayo",
-    # "killjoy",
-    # "neon",
-    # "omen",
-    # "phoenix",
-    # "raze",
-    "reyna",
-    "sage",
-    "skye",
-    "sova",
-    # "tejo",
-    # "veto",
-    # "viper",
-    # "vyse",
-    # "waylay",
-    # "yoru",
-]
-
-# VLR Region List
-VLR_REGIONS = [
-    "na",
-    "eu",
-    # "br",
-    "ap",
-    # "kr",
-    # "cn",
-    # "jp",
-    # "las",
-    # "lan",
-    # "oce",
-    # "mn",
-    # "gc",
-    # "cg",
-]
 
 # VLR Region Dict to Region Name
 VLR_REGIONS_DICT = {
     "na": "North America",
     "eu": "Europe",
-    # "br": "Brazil",
-    # "ap": "Asia-Pacific",
-    # "kr": "Korea",
-    # "cn": "China",
-    # "jp": "Japan",
-    # "las": "Latin America South",
-    # "lan": "Latin America North",
-    # "oce": "Oceania",
-    # "mn": "MENA",
-    # "gc": "Game Changers",
-    # "cg": "Collegiate",
+    "br": "Brazil",
+    "ap": "Asia-Pacific",
+    "kr": "Korea",
+    "cn": "China",
+    "jp": "Japan",
+    "las": "Latin America South",
+    "lan": "Latin America North",
+    "oce": "Oceania",
+    "mn": "MENA",
+    "gc": "Game Changers",
+    "cg": "Collegiate",
 }
 
 # VLR Maps Dict to Map Name
 VLR_MAPS_DICT = {
-    1: "bind",
-    2: "haven",
-    3: "split",
-    # 5: "ascent",
-    # 6: "icebox",
-    # 8: "breeze",
-    # 9: "fracture",
-    # 10: "pearl",
-    # 11: "lotus",
-    # 12: "sunset",
-    # 13: "abyss",
-    # 14: "corrode",
+    "1": "bind",
+    "2": "haven",
+    "3": "split",
+    "5": "ascent",
+    "6": "icebox",
+    "8": "breeze",
+    "9": "fracture",
+    "10": "pearl",
+    "11": "lotus",
+    "12": "sunset",
+    "13": "abyss",
+    "14": "corrode",
 }
 
 # VLR Events Dict to Event Name
@@ -197,26 +147,20 @@ VLR_EVENTS_DICT = {
 
 
 # Scraping Configs
-# VLR_REQUEST_HEADER = {
-#     "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0",
-# }
-VLR_REQUEST_HEADER = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
-    "image/webp,image/apng,*/*;q=0.8",
+VLR_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.vlr.gg/",
-    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
 }
-
 
 VLR_BASE_URL = "https://www.vlr.gg"
 
 
 # For Async Scraping
-ASYNCIO_SEMAPHORE_CONCURRENCY = 5
+ASYNCIO_SEMAPHORE_CONCURRENCY = 10
 
 
 # GCS Constants
@@ -228,8 +172,3 @@ DATASET_PATH = os.environ.get("DATASET_PATH")
 
 # Loading ENVs
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "LOCAL")
-
-
-# Something
-EVENTS_STATUS_CSV_FIELDS = ["event_id", "is_completed", "is_scraped", "last_scraped"]
-EVENTS_STATUS_CSV_FILENAME = "events_status.csv"
