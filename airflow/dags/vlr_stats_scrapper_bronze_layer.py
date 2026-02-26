@@ -1,11 +1,15 @@
 """
 DAG:     vlr_stats_scraper
-Version: 8.0 — metadata-driven dynamic fan-out
+Version: 9.0 — per-config independent chains via @task_group
 Runtime: Airflow 3.1.x · GCP Composer 3
+
 Flow:
-    fetch_configs → execute_cloud_run.expand
-                        → check_gcs_landed.expand
-                            → mark_scraped.expand
+    fetch_configs
+        └──→ process_config.expand(config=...)
+                 ├── execute_cloud_run   ─┐
+                 ├── check_gcs_landed    ←┘─┐
+                 └── mark_scraped        ←──┘
+             (N independent chains, one per config)
 """
 
 from __future__ import annotations
@@ -13,7 +17,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from airflow.sdk import dag, task, get_current_context, PokeReturnValue
+from airflow.sdk import (
+    dag,
+    task,
+    task_group,
+    get_current_context,
+    PokeReturnValue,
+)
 from airflow.exceptions import AirflowSkipException
 
 log = logging.getLogger(__name__)
@@ -31,12 +41,11 @@ METADATA_CONN_ID = "vlr_metadata_postgres"
 METADATA_TABLE = "vlr_events_metadata"
 BATCH_SIZE = 50
 
-# Pools — create via Admin → Pools
-CLOUD_RUN_POOL = "cloud_run_pool"  # slots = 5
-GCS_SENSOR_POOL = "gcs_sensor_pool"  # slots = 10
-DB_POOL = "postgres_pool"  # slots = 5
+CLOUD_RUN_POOL = "cloud_run_pool"  # Admin → Pools → slots = 5
+GCS_SENSOR_POOL = "gcs_sensor_pool"  # Admin → Pools → slots = 10
+DB_POOL = "postgres_pool"  # Admin → Pools → slots = 5
 
-MAX_PARALLEL_CR = 3
+MAX_PARALLEL_CR = 5
 SENSOR_POKE_SEC = 30
 SENSOR_TIMEOUT_SEC = 900  # 15 min
 CR_TIMEOUT_SEC = 7200  # 2 h
@@ -99,11 +108,8 @@ def vlr_stats_scrape_dag():
 
         configs: list[dict] = []
         for r in rows:
-            event_id = r[1]
-            map_id = r[2]
-            map_name = r[3]
-            region = r[4]
-            agent = r[5]
+            event_id, map_id, map_name = r[1], r[2], r[3]
+            region, agent = r[4], r[5]
 
             configs.append(
                 {
@@ -125,123 +131,140 @@ def vlr_stats_scrape_dag():
         log.info("Fetched %d config(s) to process", len(configs))
         return configs
 
-    # ── 2. EXECUTE CLOUD RUN ──────────────────────────────────
-    @task(
-        pool=CLOUD_RUN_POOL,
-        max_active_tis_per_dagrun=MAX_PARALLEL_CR,
-        retries=2,
-        retry_delay=timedelta(minutes=3),
-    )
-    def execute_cloud_run(config: dict) -> dict:
-        """Trigger Cloud Run job and block until it finishes.
-        Idempotent: skips if the GCS file already exists."""
-        from google.cloud import run_v2
-        from airflow.providers.google.cloud.hooks.gcs import GCSHook
+    # ── 2. PER-CONFIG TASK GROUP ──────────────────────────────
+    @task_group
+    def process_config(config: dict):
+        """Independent 3-step chain for a single config.
+        Each mapped instance runs cloud_run → gcs_check → mark_scraped
+        without waiting for other configs to finish any stage."""
 
-        label = _label(config)
-
-        # ── idempotency: skip if file already landed ──
-        if GCSHook(gcp_conn_id=GCP_CONN_ID).exists(
-            bucket_name=GCS_BUCKET, object_name=config["gcs_object"]
-        ):
-            log.info("[%s] File already in GCS — skipping Cloud Run", label)
-            config["skipped"] = True
-            return config
-
-        # ── trigger Cloud Run ──
-        overrides = run_v2.RunJobRequest.Overrides(
-            container_overrides=[
-                run_v2.RunJobRequest.Overrides.ContainerOverride(
-                    args=[
-                        f"--event_id={config['event_id']}",
-                        f"--map_id={config['map_id']}",
-                        f"--map_name={config['map_name']}",
-                        f"--region={config['region']}",
-                        f"--agent={config['agent']}",
-                        f"--destination_bucket_name={GCS_BUCKET}",
-                        f"--snapshot_date={config['ds']}",
-                    ]
-                )
-            ]
+        # ── 2a. EXECUTE CLOUD RUN ─────────────────────────────
+        @task(
+            pool=CLOUD_RUN_POOL,
+            max_active_tis_per_dagrun=MAX_PARALLEL_CR,
+            retries=2,
+            retry_delay=timedelta(minutes=3),
         )
+        def execute_cloud_run(cfg: dict) -> dict:
+            """Trigger Cloud Run job and block until it finishes.
+            Idempotent: skips if the GCS file already exists."""
+            from google.cloud import run_v2
+            from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
-        job_path = (
-            f"projects/{GCP_PROJECT_ID}"
-            f"/locations/{GCP_REGION}"
-            f"/jobs/{CLOUD_RUN_JOB}"
-        )
+            label = _label(cfg)
 
-        operation = run_v2.JobsClient().run_job(
-            run_v2.RunJobRequest(name=job_path, overrides=overrides)
-        )
-        log.info("[%s] Cloud Run triggered — waiting …", label)
+            # ── idempotency: skip if file already landed ──
+            if GCSHook(gcp_conn_id=GCP_CONN_ID).exists(
+                bucket_name=GCS_BUCKET, object_name=cfg["gcs_object"]
+            ):
+                log.info("[%s] File already in GCS — skipping Cloud Run", label)
+                cfg["skipped"] = True
+                return cfg
 
-        execution = operation.result(timeout=CR_TIMEOUT_SEC)
-
-        condition = (
-            execution.conditions[-1].type_ if execution.conditions else "UNKNOWN"
-        )
-        log.info("[%s] Cloud Run completed — condition=%s", label, condition)
-
-        config["skipped"] = False
-        return config
-
-    # ── 3. CHECK GCS LANDING ──────────────────────────────────
-    @task.sensor(
-        poke_interval=SENSOR_POKE_SEC,
-        timeout=SENSOR_TIMEOUT_SEC,
-        mode="reschedule",
-        exponential_backoff=True,
-        pool=GCS_SENSOR_POOL,
-    )
-    def check_gcs_landed(config: dict) -> PokeReturnValue:
-        """Poke GCS until the expected file exists.
-        mode=reschedule frees the worker slot between pokes."""
-        from airflow.providers.google.cloud.hooks.gcs import GCSHook
-
-        if config.get("skipped"):
-            return PokeReturnValue(is_done=True, xcom_value=config)
-
-        exists = GCSHook(gcp_conn_id=GCP_CONN_ID).exists(
-            bucket_name=GCS_BUCKET, object_name=config["gcs_object"]
-        )
-
-        if exists:
-            log.info(
-                "[row=%s] ✓ GCS confirmed: %s",
-                config["row_id"],
-                config["gcs_object"],
+            # ── trigger Cloud Run ──
+            overrides = run_v2.RunJobRequest.Overrides(
+                container_overrides=[
+                    run_v2.RunJobRequest.Overrides.ContainerOverride(
+                        args=[
+                            f"--event_id={cfg['event_id']}",
+                            f"--map_id={cfg['map_id']}",
+                            f"--map_name={cfg['map_name']}",
+                            f"--region={cfg['region']}",
+                            f"--agent={cfg['agent']}",
+                            f"--destination_bucket_name={GCS_BUCKET}",
+                            f"--snapshot_date={cfg['ds']}",
+                        ]
+                    )
+                ]
             )
-            return PokeReturnValue(is_done=True, xcom_value=config)
 
-        log.info("[row=%s] waiting for: %s", config["row_id"], config["gcs_object"])
-        return PokeReturnValue(is_done=False)
+            job_path = (
+                f"projects/{GCP_PROJECT_ID}"
+                f"/locations/{GCP_REGION}"
+                f"/jobs/{CLOUD_RUN_JOB}"
+            )
 
-    # ── 4. MARK SCRAPED ───────────────────────────────────────
-    @task(pool=DB_POOL, retries=3)
-    def mark_scraped(config: dict) -> None:
-        """Final step: set is_scrapped=TRUE and last_scraped=NOW()."""
-        from airflow.providers.postgres.hooks.postgres import PostgresHook
+            operation = run_v2.JobsClient().run_job(
+                run_v2.RunJobRequest(name=job_path, overrides=overrides)
+            )
+            log.info("[%s] Cloud Run triggered — waiting …", label)
 
-        PostgresHook(postgres_conn_id=METADATA_CONN_ID).run(
-            f"""
-            UPDATE {METADATA_TABLE}
-            SET    is_scrapped  = TRUE,
-                   last_scraped = NOW()
-            WHERE  id = %s
-              AND  is_completed = TRUE;
-            """,
-            parameters=(config["row_id"],),
+            execution = operation.result(timeout=CR_TIMEOUT_SEC)
+
+            condition = (
+                execution.conditions[-1].type_ if execution.conditions else "UNKNOWN"
+            )
+            log.info("[%s] Cloud Run completed — condition=%s", label, condition)
+
+            cfg["skipped"] = False
+            return cfg
+
+        # ── 2b. CHECK GCS LANDING ────────────────────────────
+        @task.sensor(
+            poke_interval=SENSOR_POKE_SEC,
+            timeout=SENSOR_TIMEOUT_SEC,
+            mode="poke",
+            exponential_backoff=True,
+            pool=GCS_SENSOR_POOL,
         )
-        log.info("[row=%s] ✓ SCRAPED — %s", config["row_id"], _label(config))
+        def check_gcs_landed(cfg: dict) -> PokeReturnValue:
+            """Poke GCS until the expected file exists."""
+            from airflow.providers.google.cloud.hooks.gcs import GCSHook
+
+            if cfg.get("skipped"):
+                return PokeReturnValue(is_done=True, xcom_value=cfg)
+
+            exists = GCSHook(gcp_conn_id=GCP_CONN_ID).exists(
+                bucket_name=GCS_BUCKET, object_name=cfg["gcs_object"]
+            )
+
+            if exists:
+                log.info(
+                    "[row=%s] ✓ GCS confirmed: %s",
+                    cfg["row_id"],
+                    cfg["gcs_object"],
+                )
+                return PokeReturnValue(is_done=True, xcom_value=cfg)
+
+            log.info(
+                "[row=%s] waiting for: %s",
+                cfg["row_id"],
+                cfg["gcs_object"],
+            )
+            return PokeReturnValue(is_done=False)
+
+        # ── 2c. MARK SCRAPED ─────────────────────────────────
+        @task(pool=DB_POOL, retries=3)
+        def mark_scraped(cfg: dict) -> None:
+            """Set is_scrapped=TRUE and last_scraped=NOW()."""
+            from airflow.providers.postgres.hooks.postgres import PostgresHook
+
+            PostgresHook(postgres_conn_id=METADATA_CONN_ID).run(
+                f"""
+                UPDATE {METADATA_TABLE}
+                SET    is_scrapped  = TRUE,
+                       last_scraped = NOW()
+                WHERE  id = %s
+                  AND  is_completed = TRUE;
+                """,
+                parameters=(cfg["row_id"],),
+            )
+            log.info(
+                "[row=%s] ✓ SCRAPED — %s",
+                cfg["row_id"],
+                _label(cfg),
+            )
+
+        # ── chain inside the group ────────────────────────────
+        cr_result = execute_cloud_run(config)
+        gcs_result = check_gcs_landed(cr_result)
+        mark_scraped(gcs_result)
 
     # ╔══════════════════════════════════════════════════════════╗
     # ║  WIRING                                                  ║
     # ╚══════════════════════════════════════════════════════════╝
     configs = fetch_configs()
-    cr_done = execute_cloud_run.expand(config=configs)
-    gcs_ok = check_gcs_landed.expand(config=cr_done)
-    mark_scraped.expand(config=gcs_ok)
+    process_config.expand(config=configs)
 
 
 vlr_stats_scrape_dag()
