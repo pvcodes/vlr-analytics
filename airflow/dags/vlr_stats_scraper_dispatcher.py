@@ -56,7 +56,7 @@ def _job_path() -> str:
 @dag(
     dag_id="gud_vlr_stats_scraper_dispatcher",
     # schedule="0 * * * *",
-    schedule="*/15 * * * *",
+    schedule="*/30 * * * *",
     start_date=datetime(2025, 1, 1),
     catchup=False,
     max_active_runs=2,
@@ -69,7 +69,7 @@ def _job_path() -> str:
     doc_md="""
 ## VLR Stats Scraper — Dispatcher
 
-Runs every **15 minutes**. Fetches up to 200 rows where
+Runs every **30 minutes**. Fetches up to 200 rows where
 `is_completed = TRUE AND is_scrapped = FALSE` and submits one Cloud Run job
 execution per row.
 
