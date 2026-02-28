@@ -1,0 +1,76 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: vlr-stats-scraper-batch
+  labels:
+    cloud.googleapis.com/location: asia-south1
+
+spec:
+  template:
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          serviceAccountName: vlr-scraper-sa
+          maxRetries: 0
+          timeoutSeconds: 3600
+          containers:
+            - image: asia-south1-docker.pkg.dev/vlr-analytics/vlr-repo/vlr-analytics-scraper-batch:latest
+              resources:
+                limits:
+                  memory: 1Gi
+                  cpu: "1"
+              env:
+                - name: ENVIRONMENT
+                  value: "PRODUCTION"
+
+                - name: DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: DB_HOST
+                      key: "1"
+
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: DB_USER
+                      key: "1"
+
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: DB_PASSWORD
+                      key: "1"
+
+                - name: DB_NAME
+                  value: "vlr_events_metadata"
+
+                - name: DB_PORT
+                  value: "5432"
+
+                - name: DB_POOL_MAX_CONN
+                  value: "3"
+
+                - name: GCS_DATALAKE_BUCKET_NAME
+                  value: "vlr-data-lake"
+
+                - name: GCP_PROJECT_ID
+                  value: "vlr-analytics"
+
+                - name: SCRAPER_BATCH_SIZE
+                  value: "1000"
+
+                - name: ASYNCIO_SEMAPHORE_CONCURRENCY
+                  value: "12"
+
+                - name: PROXY_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: PROXY_USER
+                      key: "1"
+
+                - name: PROXY_PSWRD
+                  valueFrom:
+                    secretKeyRef:
+                      name: PROXY_PSWRD
+                      key: "1"

@@ -1,0 +1,13 @@
+[project]
+name = "vlr-analytics"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "google-cloud-storage>=3.9.0",
+    "httpx[http2]>=0.28.1",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.1",
+    "selectolax>=0.4.6",
+]

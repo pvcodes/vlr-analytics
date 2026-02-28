@@ -198,25 +198,15 @@ cython_debug/
 .venv
 
 data
-tmp.py
-legacy/
-test.csv
-setup.py
-*.csv
-configs/
 tmp/
-utils/
-pipelines/
-notebooks/
+legacy/
+*.csv
+setup.py
+
 workflow*.md
-
-README.md
-.DS_Store
-**/*/.DS_Store
-
-
 x.ipynb
 
+notebooks/
+**/.DS_Store
 logs/
-
-!functions/vlr-stats-scrapper-batch/utils/
+.env.prod
