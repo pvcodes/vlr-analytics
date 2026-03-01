@@ -20,6 +20,7 @@ from utils.helpers import (
     write_csv,
     get_proxies,
     create_client,
+    release_partition_by_id,
 )
 
 
@@ -51,7 +52,6 @@ async def fetch_with_retry(client, event_id, region, agent, map_id, max_retries=
 # =========================================================
 async def worker(name: str, queue: asyncio.Queue, client):
 
-    # Warm up session
     try:
         await client.get("/")
     except Exception as e:
@@ -59,6 +59,7 @@ async def worker(name: str, queue: asyncio.Queue, client):
 
     while True:
         job = await queue.get()
+        row_id = None  # important for exception safety
 
         try:
             if job is None:
@@ -77,7 +78,6 @@ async def worker(name: str, queue: asyncio.Queue, client):
 
             start = time.perf_counter()
 
-            # Per-IP pacing
             await asyncio.sleep(random.uniform(2.0, 5.0))
 
             result = await fetch_with_retry(
@@ -87,6 +87,11 @@ async def worker(name: str, queue: asyncio.Queue, client):
                 agent=agent,
                 map_id=map_id,
             )
+
+            if result is None:
+                logger.error(f"{name} FAIL | id={row_id} | releasing job")
+                release_partition_by_id(row_id=row_id)
+                continue
 
             if result:
                 write_csv(
@@ -103,26 +108,33 @@ async def worker(name: str, queue: asyncio.Queue, client):
                     ),
                 )
             else:
-                logger.warning(f"Skipping writing 0 rows → {dest_path}")
+                logger.info(f"Skipping writing 0 rows -> {dest_path}")
 
             mark_partition_as_scraped_by_id(row_id=row_id)
 
             elapsed = time.perf_counter() - start
+            rows_count = len(result)
 
             logger.info(
                 f"{name} OK | id={row_id} event={event_id} "
                 f"map={map_name} agent={agent} "
-                f"rows={len(result)} time={elapsed:.2f}s"
+                f"rows={rows_count} time={elapsed:.2f}s"
             )
 
         except asyncio.CancelledError:
-            raise  # important: don't swallow cancellation
+            raise
 
         except Exception as e:
-            logger.error(f"{name} FAIL | {e}", exc_info=True)
+            logger.error(
+                f"{name} CRASH | id={row_id} | {e}",
+                exc_info=True,
+            )
+
+            # 🔥 CRASH SAFETY
+            if row_id is not None:
+                release_partition_by_id(row_id=row_id)
 
         finally:
-            # ✅ EXACTLY ONE task_done per get()
             queue.task_done()
 
 

@@ -1,9 +1,5 @@
 from google.cloud import storage
-
 from utils.vct_logging import logger
-
-
-from google.cloud import storage
 
 
 def upload_blob_to_gcs(
@@ -23,9 +19,7 @@ def upload_blob_to_gcs(
     """
 
     try:
-        logger.info(
-            f"[GCS] Uploading {destination_blob_name} to {bucket_name}"
-        )
+        logger.info(f"[GCS] Uploading {destination_blob_name} to {bucket_name}")
 
         client = storage.Client()
         bucket = client.bucket(bucket_name)
@@ -41,7 +35,5 @@ def upload_blob_to_gcs(
         )
 
     except Exception:
-        logger.exception(
-            f"[GCS] Failed to upload {destination_blob_name}"
-        )
+        logger.exception(f"[GCS] Failed to upload {destination_blob_name}")
         raise

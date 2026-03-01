@@ -57,6 +57,7 @@ VLR_MAPS_DICT = {
     "14": "corrode",
 }
 
+METADATA_TABLE = "vlr_events_metadata"
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "LOCAL")
 SCRAPER_BATCH_SIZE = int(os.environ.get("SCRAPER_BATCH_SIZE", 1000))
@@ -75,7 +76,7 @@ DB_USER = os.environ.get("DB_USER")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
 POOL_MIN_CONN = int(os.environ.get("DB_POOL_MIN_CONN", 1))
-POOL_MAX_CONN = int(os.environ.get("DB_POOL_MAX_CONN", 3))
+POOL_MAX_CONN = int(os.environ.get("DB_POOL_MAX_CONN", 1))
 
 # =========================
 # Startup Logging

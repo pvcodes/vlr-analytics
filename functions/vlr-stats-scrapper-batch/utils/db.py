@@ -56,17 +56,19 @@ def get_conn():
 class DBHook:
 
     def get_records(self, query: str, parameters=None):
-
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, parameters)
                 return cursor.fetchall()
 
-    def run(self, query: str, parameters=None):
-
+    def run(self, query: str, parameters=None, fetch: bool = False):
         with get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(query, parameters)
+
+                if fetch:
+                    return cursor.fetchall()
+
                 return cursor.rowcount
 
 
