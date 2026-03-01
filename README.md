@@ -10,16 +10,16 @@ The system processes **500K–1M player performance records** across competitive
 
 # Architecture
 
-![Image](images/dark_mode_architecture.png)
+![Image](images/light_mode_architecture.png)
 
 ---
 
 # Processing Strategy
 
-## Initial Backfill (Batch)
+## [Initial Backfill (Batch)](./functions/vlr-stats-scrapper-batch/README.md)
 
 * Historical events are processed in bulk across all scraped events.
-* Airflow dispatches Cloud Run jobs in batches.
+* Airflow dispatches Batch Cloud Run jobs.
 * Silver and Gold transformations run after ingestion completes.
 * Ensures a complete historical dataset before incremental scheduling begins.
 
@@ -114,13 +114,13 @@ Gold tables are loaded into BigQuery for SQL-based analysis and dashboard consum
 
 # Pipeline Performance
 
-| Stage                        | Duration         |
-|-----------------------------|------------------|
-| Cloud Run scrape (per event) | < 5 minutes      |
-| Spark Silver + Gold transforms | 15–20 minutes  |
-| Full Airflow DAG (end-to-end) | 20–40 minutes   |
-| Records processed             | 500K–1M rows     |
-| Events ingested               | ~100 events      |
+| Stage                           | Duration          |
+|---------------------------------|-------------------|
+| Cloud Run scrape (per event)    | < 2 minutes       |
+| Spark Silver + Gold transforms  | 15–20 minutes     |
+| Full Airflow DAG (end-to-end)   | 30-40 minutes     |
+| Records processed               | 500K–1M rows      |
+| Events ingested                 | ~100 events       |
 
 ---
 
@@ -192,12 +192,13 @@ All infrastructure is version-controlled and fully reproducible from a single `t
 
 ```
 .
-├── airflow/                    # DAGs & orchestration logic
+├── airflow/                          # DAGs & orchestration logic
 ├── functions/
-│   ├── vlr-stats-scrapper/     # Bronze layer (Cloud Run)
-│   ├── vlr-silver-transform/   # Silver layer (Spark)
-│   └── vlr-gold-transform/     # Gold layer (Spark)
-├── terraform/                  # Infrastructure as Code
-├── notebooks/                  # Exploratory analysis
+│   ├── vlr-stats-scrapper-batch/     # Bronze layer (Cloud Run), for initial backfill
+│   ├── vlr-stats-scrapper/           # Bronze layer (Cloud Run)
+│   ├── vlr-silver-transform/         # Silver layer (Spark)
+│   └── vlr-gold-transform/           # Gold layer (Spark)
+├── terraform/                        # Infrastructure as Code
+├── notebooks/                        # Exploratory analysis
 └── README.md
 ```
