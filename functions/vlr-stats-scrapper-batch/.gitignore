@@ -210,3 +210,4 @@ notebooks/
 **/.DS_Store
 logs/
 .env.prod
+!utils/

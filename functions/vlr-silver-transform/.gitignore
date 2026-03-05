@@ -38,6 +38,7 @@ profile.json
 profile.json.gz
 
 # MkDocs
+
 /site
 
 # Generated reference docs (use `cargo dev generate-all` to regenerate)
@@ -51,3 +52,7 @@ profile.json.gz
 # IDE
 .idea
 .vscode
+
+
+!utils/
+**/.ipynb_checkpoints/
