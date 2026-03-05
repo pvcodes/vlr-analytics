@@ -207,7 +207,6 @@ configs/
 tmp/
 utils/
 pipelines/
-notebooks/
 workflow*.md
 
 README.md
