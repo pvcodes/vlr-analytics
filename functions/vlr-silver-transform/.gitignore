@@ -51,6 +51,3 @@ profile.json.gz
 # IDE
 .idea
 .vscode
-
-notebook/
-notebook
