@@ -7,7 +7,7 @@ Reads a single snapshot partition from GCS Bronze layer, applies cleaning
 and type transformations, and writes Parquet to GCS Silver layer.
 
 Usage:
-    python transform.py \
+    python main.py \
         --base_path gs://vlr-data-lake/bronze \
         --silver_path gs://vlr-data-lake/silver \
         --snapshot_date 2026-02-26
@@ -18,6 +18,7 @@ Airflow (DataprocCreateBatchOperator args):
 
 import argparse
 import logging
+import sys
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
@@ -30,14 +31,39 @@ from pyspark.sql.functions import (
     lit,
     current_timestamp,
     input_file_name,
-    row_number,
     sum as spark_sum,
 )
 from pyspark.sql.types import IntegerType, DoubleType
-from pyspark.sql.window import Window
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
+def get_logger(name: str) -> logging.Logger:
+    """
+    GCP/Dataproc-friendly logger.
+    - Logs to stdout so Dataproc Serverless captures them in Cloud Logging.
+    - Suppresses noisy py4j and pyspark loggers.
+    """
+    logger = logging.getLogger(name)
+
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    for noisy in ("py4j", "pyspark", "org.apache.spark"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    return logger
+
+
+logger = get_logger(__name__)
 
 PIPELINE_VERSION = "1.0.0"
 COMPOSITE_KEY = ["player_id", "snapshot_date", "agent", "map", "event_id", "region"]
@@ -80,7 +106,9 @@ def read_bronze(spark, base_path, snapshot_date):
     snapshot_glob = (
         f"{base_path}/event_id=*/region=*/map=*/agent=*/snapshot_date={snapshot_date}/"
     )
-    logger.info(f"Reading snapshot_date={snapshot_date} from: {snapshot_glob}")
+    logger.info(
+        "Reading bronze | snapshot_date=%s path=%s", snapshot_date, snapshot_glob
+    )
 
     df = (
         spark.read.option("header", "true")
@@ -89,27 +117,30 @@ def read_bronze(spark, base_path, snapshot_date):
         .csv(snapshot_glob)
         .withColumn("_source_file", input_file_name())
         .withColumn("_ingested_at", current_timestamp())
-        .drop("agents")  # redundant — agent partition column is source of truth
+        .drop("agents")
     )
-    logger.info(f"Row count after read: {df.count()}")
+    count = df.count()
+    logger.info("Bronze read complete | row_count=%d", count)
     return df
 
 
 def deduplicate(df):
     """
-    Defensive dedup on composite natural key.
-    Same player can appear multiple times per snapshot across different
-    agent/map/region/event combinations — only exact matches on all 6
-    fields are true duplicates. Latest ingested row wins.
+    Dedup on composite natural key using dropDuplicates.
+    Avoids Window + row_number shuffle which caused MetadataFetchFailedException
+    under low executor counts. dropDuplicates uses a hash aggregate — lighter
+    on memory and shuffle output locations.
     """
-    logger.info("Applying deduplication on composite key")
-    window = Window.partitionBy(*COMPOSITE_KEY).orderBy(col("_ingested_at").desc())
-    df = (
-        df.withColumn("_rn", row_number().over(window))
-        .filter(col("_rn") == 1)
-        .drop("_rn")
+    logger.info("Deduplicating | key=%s", COMPOSITE_KEY)
+    before = df.count()
+    df = df.dropDuplicates(COMPOSITE_KEY)
+    after = df.count()
+    logger.info(
+        "Dedup complete | before=%d after=%d dropped=%d",
+        before,
+        after,
+        before - after,
     )
-    logger.info(f"Row count after dedup: {df.count()}")
     return df
 
 
@@ -117,12 +148,8 @@ def derive_nulls(df):
     """
     Derive columns that can be computed from existing raw counts
     rather than leaving as NULL.
-
-    kill_deaths           — NULL when deaths=0 (division by zero in source)
-    first_kills_per_round — NULL when first_kills=0 (VLR.gg omits zero values)
     """
-    logger.info("Deriving kill_deaths and first_kills_per_round from raw counts")
-
+    logger.info("Deriving null columns: kill_deaths, first_kills_per_round")
     df = df.withColumn(
         "kill_deaths",
         when(
@@ -132,7 +159,6 @@ def derive_nulls(df):
             ),
         ).otherwise(col("kill_deaths")),
     )
-
     df = df.withColumn(
         "first_kills_per_round",
         when(
@@ -140,17 +166,15 @@ def derive_nulls(df):
             round(col("first_kills").cast(DoubleType()) / col("rounds_played"), 2),
         ).otherwise(col("first_kills_per_round")),
     )
-
     return df
 
 
 def normalize_percentages(df):
     """
     Strip % suffix and normalize percentage columns to 0-1 float.
-    e.g. "89%" -> 0.89
     NULLs are preserved — unknown != zero.
     """
-    logger.info("Normalizing percentage columns to 0-1 float")
+    logger.info("Normalizing percentage columns | cols=%s", PCT_COLS)
     for c in PCT_COLS:
         df = df.withColumn(
             c,
@@ -169,9 +193,8 @@ def parse_clutches(df):
         clutches_played     -> integer
         clutch_success_rate -> derived double
 
-    clutch_success_percentage is dropped — VLR.gg leaves it NULL whenever
-    clutches_won=0, making it unreliable. The derived rate correctly
-    returns 0.0 in those cases.
+    clutch_success_percentage dropped — VLR.gg leaves it NULL when
+    clutches_won=0, making it unreliable. Derived rate returns 0.0 correctly.
     """
     logger.info("Parsing clutches_won_played_ratio")
     df = (
@@ -204,11 +227,7 @@ def parse_clutches(df):
 
 
 def normalize_strings(df):
-    """
-    Defensive trim on player and org.
-    Casing intentionally preserved — gamertags and org codes are identity fields.
-    """
-    logger.info("Trimming string columns")
+    logger.info("Trimming string columns: player, org")
     df = df.withColumn("player", trim(col("player"))).withColumn(
         "org", trim(col("org"))
     )
@@ -216,7 +235,7 @@ def normalize_strings(df):
 
 
 def add_metadata(df, pipeline_version):
-    logger.info("Adding lineage metadata columns")
+    logger.info("Adding lineage metadata | pipeline_version=%s", pipeline_version)
     df = df.withColumn("_pipeline_version", lit(pipeline_version))
     return df
 
@@ -226,7 +245,7 @@ def validate(df):
     Log null counts per column for observability.
     No rows are dropped — validation is informational at Silver layer.
     """
-    logger.info("Running null count validation")
+    logger.info("Running null validation")
     null_counts = (
         df.select(
             [
@@ -237,29 +256,37 @@ def validate(df):
         .collect()[0]
         .asDict()
     )
-    for column, count in null_counts.items():
-        if count > 0:
-            logger.warning(f"NULL count — {column}: {count}")
+    dirty = {c: n for c, n in null_counts.items() if n > 0}
+    if dirty:
+        for column, count in dirty.items():
+            logger.warning("Null detected | column=%s null_count=%d", column, count)
+    else:
+        logger.info("Null validation passed | no nulls detected")
     return df
 
 
 def write_silver(df, silver_path):
-    """
-    Write only the current snapshot partition using dynamic partition overwrite.
-    Existing snapshot partitions in Silver are untouched.
-    """
-    logger.info(f"Writing Silver data to: {silver_path}")
+    logger.info("Writing silver | path=%s", silver_path)
     (
-        df.write.mode("overwrite")
+        df.coalesce(4)
+        .write.mode("overwrite")
         .option("partitionOverwriteMode", "dynamic")
-        .partitionBy("event_id", "region", "map", "agent", "snapshot_date")
+        .partitionBy(
+            "snapshot_date", "event_id", "region", "map", "agent"
+        )  # snapshot_date first
         .parquet(silver_path)
     )
-    logger.info("Write complete")
+    logger.info("Silver write complete")
 
 
 def main():
     args = parse_args()
+
+    logger.info(
+        "Pipeline starting | snapshot_date=%s pipeline_version=%s",
+        args.snapshot_date,
+        args.pipeline_version,
+    )
 
     spark = (
         SparkSession.builder.appName("vlr-bronze-to-silver")
@@ -278,9 +305,10 @@ def main():
 
     write_silver(df, args.silver_path)
 
-    logger.info(f"Bronze to Silver complete — snapshot_date={args.snapshot_date}")
+    logger.info("Pipeline complete | snapshot_date=%s", args.snapshot_date)
     spark.stop()
 
 
 if __name__ == "__main__":
     main()
+c

@@ -220,3 +220,5 @@ x.ipynb
 logs/
 
 !functions/vlr-stats-scrapper-batch/utils/
+
+**/.ipynb_checkpoints/
