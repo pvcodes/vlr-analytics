@@ -6,6 +6,13 @@ VLR Analytics is a production-style data engineering project that implements a *
 
 The system processes **500K–1M player performance records** across competitive events, with a full pipeline running end-to-end in under 40 minutes — from raw scrape to analytics-ready Gold tables in BigQuery.
 
+Looker Dashboards
+
+1. [VLR Analytics — Player Performance](https://lookerstudio.google.com/reporting/a9cd05c6-7055-44cf-b610-a7f3f75d9aab)
+2. [VLR Analytics - Agent Meta](https://lookerstudio.google.com/reporting/ac430615-353d-4baa-8700-d387fc7eac59)
+3. [VLR Analytics - Map Stats](https://lookerstudio.google.com/reporting/592a2e4b-9cab-4e5c-b3ca-48cbf45d9159)
+
+> Notebook Exploration: [link](./functions/vlr-gold-transform/notebook/gold_exploration.ipynb)
 ---
 
 # Architecture
