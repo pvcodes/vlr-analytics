@@ -1,14 +1,37 @@
 
-# VLR Analytics – Airflow 3.1.x Orchestration Layer
+# VLR Analytics — Airflow Orchestration
 
-This directory contains the Apache Airflow setup used to orchestrate Bronze layer ingestion jobs in the VLR Analytics pipeline.
+Apache Airflow 3.x setup for orchestrating VLR stats scraping and data pipeline.
 
-Airflow is responsible for:
+## Overview
 
-* Scheduling ingestion workflows
-* Triggering Cloud Run Jobs for VLR player stats scraping
-* Managing runtime argument injection
-* Syncing DAG definitions to Google Cloud Storage (GCS) for remote execution environments
+Manages the Bronze layer ingestion workflow:
+
+1. **Dispatcher DAG** — Runs every 30 min, submits Cloud Run jobs for pending events
+2. **Completion DAG** — Runs every 5 min, polls Pub/Sub for job completions, updates PostgreSQL
+3. **Batch DAG** — Manual trigger for historical backfill of pending events
+
+---
+
+## DAGs
+
+### Dispatcher (`vlr_stats_scraper_dispatcher`)
+
+- **Schedule**: Every 30 minutes
+- **Purpose**: Fetches up to 200 un-scraped completed events from PostgreSQL and submits one Cloud Run job per row
+- **Protection**: `FOR UPDATE SKIP LOCKED` prevents double-dispatch
+- **Output**: Triggers Cloud Run jobs → Pub/Sub completion messages
+
+### Completion (`vlr_stats_scraper_completion`)
+
+- **Schedule**: Every 5 minutes
+- **Purpose**: Pulls Pub/Sub messages from `vlr-stats-scraper-completion-sub`, marks successful rows as `is_scrapped = TRUE`
+- **Failure handling**: Failed scrapes are not acknowledged → Pub/Sub redelivers
+
+### Batch (`vlr_stats_scraper_batch`)
+
+- **Schedule**: Manual trigger only
+- **Purpose**: Historical backfill — fetches all pending events, runs Cloud Run jobs in parallel, publishes completion Pub/Sub
 
 ---
 
@@ -17,147 +40,85 @@ Airflow is responsible for:
 ```
 airflow/
 ├── dags/
-│   └── vlr_stats_scrapper_bronze_layer.py   # Bronze ingestion DAG
-├── plugins/                                 # Custom operators/hooks (if any)
-├── main.py                                  # DAG sync to GCS script
-├── start.sh                                 # Local standalone Airflow launcher
-├── pyproject.toml                           # Project dependencies
-└── uv.lock                                  # Locked dependency versions
+│   ├── vlr_stats_scraper_dispatcher.py   # 30-min event dispatcher
+│   ├── vlr_stats_scraper_completion.py    # Pub/Sub completion handler
+│   └── vlr_stats_scraper_batch.py        # Historical backfill
+├── main.py                                # DAG sync to GCS
+├── start.sh                               # Local Airflow standalone
+├── pyproject.toml
+└── uv.lock
 ```
 
 ---
 
-## Local Development Setup
+## Local Development
 
 ### Install Dependencies
-
-This project uses `uv` for dependency management.
 
 ```bash
 uv sync
 ```
 
----
-
 ### Environment Variables
-
-Copy the example environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Update with your values:
+Required variables:
 
 ```
 GCP_AIRFLOW_BUCKET=asia-south2-vlr-airflow-com-fdd59011-bucket
 AIRFLOW_HOME=/absolute/path/to/airflow
 ```
 
----
-
-## Running Airflow Locally
-
-Use the provided startup script:
+### Run Airflow Locally
 
 ```bash
 ./start.sh
 ```
 
-This launches Airflow in **standalone mode** with the following runtime fixes:
-
-* macOS fork safety override (required for multiprocessing)
-* Native gRPC DNS resolver (required for Google Cloud SDK)
-* Disabled proxy resolution conflicts
-* Python fault handler enabled for debugging scheduler crashes
-
-Airflow UI will be available at:
-
-```
-http://localhost:8080
-```
+Airflow UI: <http://localhost:8080>
 
 ---
 
-## DAG Deployment (GCS Sync)
+## Deployment
 
-To deploy DAGs to a remote Composer or shared GCS-backed environment:
+### Sync DAGs to GCS
 
 ```bash
 python main.py
 ```
 
-This uploads all `.py` DAG files from:
+Uploads DAGs from `$AIRFLOW_HOME/dags/` to `gs://<GCP_AIRFLOW_BUCKET>/dags/`
 
-```
-$AIRFLOW_HOME/dags/
-```
+### Airflow Variables
 
-to:
+Set in Airflow UI → Admin → Variables:
 
-```
-gs://<GCP_AIRFLOW_BUCKET>/dags/
-```
-
-Uploads are deterministic and overwrite existing DAG definitions.
-
----
-
-## Bronze Ingestion Workflow
-
-The DAG:
-
-```
-vlr_stats_scrapper_bronze_layer.py
-```
-
-is responsible for triggering the:
-
-> VLR Player Stats Bronze Ingestion Cloud Run Job
-
-using:
-
-* `CloudRunExecuteJobOperator`
-* Runtime container argument overrides
-* Deterministic Bronze partition keys
-
-Each execution generates or overwrites a partition in:
-
-```
-gs://vlr-data-lake/bronze/
-```
-
-based on
-
-```
-bronze/
-  event_id=<event_id>/
-    region=<region>/
-      map=<map_name>/
-        agent=<agent>/
-          snapshot_date=<YYYY-MM-DD>/
-            data.csv
-```
+| Variable | Description |
+|----------|-------------|
+| `vlr_pg_conn_id` | PostgreSQL connection for metadata |
+| `vlr_project_id` | GCP project ID |
+| `vlr_region` | GCP region for Cloud Run |
+| `vlr_cloud_run_job_name` | Cloud Run Job name |
+| `vlr_pubsub_topic` | Pub/Sub topic for completion |
 
 ---
 
 ## Dependencies
 
-* `apache-airflow`
-* `apache-airflow-providers-google`
-* `apache-airflow-providers-postgres`
-* `google-cloud-storage`
+- `apache-airflow>=3.1.0`
+- `apache-airflow-providers-google`
+- `apache-airflow-providers-postgres`
+- `apache-airflow-providers-pubsub`
+- `google-cloud-run`
+- `google-cloud-storage`
 
 ---
 
 ## Notes
 
-* Airflow standalone mode is intended for local orchestration only.
-* Production scheduling is expected to run via Cloud Composer or equivalent managed Airflow environments.
-* DAG sync script must be executed after DAG updates to reflect changes in remote environments.
-
----
-
-## License
-
-MIT
+- Standalone mode is for local development only
+- Production uses Cloud Composer or GCS-backed remote execution
+- Run `python main.py` after any DAG changes to sync to remote
