@@ -211,3 +211,4 @@ notebooks/
 logs/
 .env.prod
 !utils/
+!README.md
