@@ -51,7 +51,7 @@ Insights are surfaced through **interactive Looker Studio dashboards** covering 
 
 Historical events are processed in bulk across all scraped events. Airflow dispatches Batch Cloud Run jobs, and Silver and Gold transformations run after ingestion completes. This ensures a complete historical dataset before incremental scheduling begins.
 
-See: [`vlr-stats-scrapper-batch` README](./functions/vlr-stats-scrapper-batch/README.md)
+See: **VLR Stats Scrapper Batch [README.md](./functions/vlr-stats-scrapper-batch/README.md)**
 
 ### Incremental Processing (Every 15 Days)
 
