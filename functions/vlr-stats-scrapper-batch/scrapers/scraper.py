@@ -13,7 +13,7 @@ from utils.constants import (
     GCS_DATALAKE_BUCKET_NAME,
 )
 
-from utils.vct_logging import logger
+from utils.vct_logging import logger, get_logger_with_context
 from utils.helpers import (
     get_jobs_configs,
     mark_partition_as_scraped_by_id,
@@ -27,7 +27,7 @@ from utils.helpers import (
 # =========================================================
 # RETRY WRAPPER
 # =========================================================
-async def fetch_with_retry(client, event_id, region, agent, map_id, max_retries=5):
+async def fetch_with_retry(client, event_id, region, agent, map_id, log, max_retries=5):
     for attempt in range(max_retries):
         try:
             return await vlr_stats(
@@ -39,8 +39,8 @@ async def fetch_with_retry(client, event_id, region, agent, map_id, max_retries=
             )
         except Exception as e:
             wait = (2**attempt) + random.uniform(0.5, 1.5)
-            logger.warning(
-                f"Retry {attempt+1}/{max_retries} | Sleeping {wait:.2f}s | {e}"
+            log.warning(
+                f"Retry {attempt + 1}/{max_retries} | Sleeping {wait:.2f}s | {e}"
             )
             await asyncio.sleep(wait)
 
@@ -50,12 +50,13 @@ async def fetch_with_retry(client, event_id, region, agent, map_id, max_retries=
 # =========================================================
 # WORKER (1 PER PROXY)
 # =========================================================
-async def worker(name: str, queue: asyncio.Queue, client):
+async def worker(proxy_user: str, worker_id: str, queue: asyncio.Queue, client):
+    log = get_logger_with_context(proxy=proxy_user, worker=worker_id)
 
     try:
         await client.get("/")
     except Exception as e:
-        logger.warning(f"{name} warmup failed: {e}")
+        log.warning(f"{worker_id} warmup failed: {e}")
 
     while True:
         job = await queue.get()
@@ -63,7 +64,7 @@ async def worker(name: str, queue: asyncio.Queue, client):
 
         try:
             if job is None:
-                logger.info(f"{name} shutting down")
+                log.info(f"{worker_id} shutting down")
                 break
 
             (
@@ -78,7 +79,7 @@ async def worker(name: str, queue: asyncio.Queue, client):
 
             start = time.perf_counter()
 
-            await asyncio.sleep(random.uniform(2.0, 5.0))
+            await asyncio.sleep(random.uniform(0.1, 0.3))
 
             result = await fetch_with_retry(
                 client=client,
@@ -86,10 +87,11 @@ async def worker(name: str, queue: asyncio.Queue, client):
                 region=region,
                 agent=agent,
                 map_id=map_id,
+                log=log,
             )
 
             if result is None:
-                logger.error(f"{name} FAIL | id={row_id} | releasing job")
+                log.error(f"{worker_id} FAIL | id={row_id} | releasing job")
                 release_partition_by_id(row_id=row_id)
                 continue
 
@@ -108,15 +110,15 @@ async def worker(name: str, queue: asyncio.Queue, client):
                     ),
                 )
             else:
-                logger.info(f"Skipping writing 0 rows -> {dest_path}")
+                log.info(f"Skipping writing 0 rows -> {dest_path}")
 
             mark_partition_as_scraped_by_id(row_id=row_id)
 
             elapsed = time.perf_counter() - start
             rows_count = len(result)
 
-            logger.info(
-                f"{name} OK | id={row_id} event={event_id} "
+            log.info(
+                f"{worker_id} OK | id={row_id} event={event_id} "
                 f"map={map_name} agent={agent} "
                 f"rows={rows_count} time={elapsed:.2f}s"
             )
@@ -125,8 +127,8 @@ async def worker(name: str, queue: asyncio.Queue, client):
             raise
 
         except Exception as e:
-            logger.error(
-                f"{name} CRASH | id={row_id} | {e}",
+            log.error(
+                f"{worker_id} CRASH | id={row_id} | {e}",
                 exc_info=True,
             )
 
@@ -141,7 +143,8 @@ async def worker(name: str, queue: asyncio.Queue, client):
 # =========================================================
 # MAIN SCRAPER
 # =========================================================
-async def stats_scrapper():
+async def stats_scrapper(proxy_user, proxy_password, instance_index: int = 0):
+    log = get_logger_with_context(proxy=proxy_user)
 
     BRONZE_DATASET_PATH = (
         Path(DATASET_PATH) / "bronze" if ENVIRONMENT != "PRODUCTION" else Path("bronze")
@@ -149,18 +152,18 @@ async def stats_scrapper():
 
     try:
         start_time = time.perf_counter()
-        logger.info(f"ETL started at {time.strftime('%X')}")
+        log.info(f"ETL started at {time.strftime('%X')}")
 
         today = time.strftime("%Y-%m-%d")
 
         queue = asyncio.Queue()
-        PROXIES = get_proxies()
+        PROXIES = get_proxies(proxy_user, proxy_password)
         # Create one client per proxy
-        clients = [await create_client(p) for p in PROXIES]
+        clients = await asyncio.gather(*[create_client(p) for p in PROXIES])
 
         # One worker per proxy
         workers = [
-            asyncio.create_task(worker(f"W{i+1}", queue, clients[i]))
+            asyncio.create_task(worker(proxy_user, f"W{i + 1}", queue, clients[i]))
             for i in range(len(PROXIES))
         ]
 
@@ -168,15 +171,14 @@ async def stats_scrapper():
         # PRODUCE JOBS
         # =========================================================
 
-        jobs = get_jobs_configs()
-        logger.info(f"Enqueued {len(jobs)} scraping jobs")
+        jobs = get_jobs_configs(proxy_user, instance_index)
+        log.info(f"Enqueued {len(jobs)} scraping jobs")
 
         for row_id, event_id, region, map_id, agent in jobs:
-
             map_name = VLR_MAPS_DICT.get(map_id)
 
             if not map_name:
-                logger.warning(f"Unknown map_id={map_id} for row_id={row_id}")
+                log.warning(f"Unknown map_id={map_id} for row_id={row_id}")
                 continue
 
             dest_path = (
@@ -213,12 +215,9 @@ async def stats_scrapper():
         await asyncio.gather(*[c.aclose() for c in clients])
 
         elapsed = time.perf_counter() - start_time
-        logger.info(
-            f"ETL finished at {time.strftime('%X')} | time taken: {elapsed:.2f}s"
-        )
-
+        log.info(f"ETL finished at {time.strftime('%X')} | time taken: {elapsed:.2f}s")
         return True
 
     except Exception as e:
-        logger.exception(f"Scraping failed - {e}")
+        log.exception(f"Scraping failed - {e}")
         return False

@@ -4,8 +4,7 @@ from utils.constants import (
     VLR_BASE_URL,
     VLR_REQUEST_HEADERS,
     SCRAPER_BATCH_SIZE,
-    PROXY_USER,
-    PROXY_PSWRD,
+    SCRAPER_INSTANCE_COUNT,
     METADATA_TABLE,
 )
 
@@ -17,6 +16,7 @@ import csv
 from typing import List, Tuple, Dict, Optional, Literal
 from io import StringIO
 import datetime
+import asyncio
 
 
 # =========================================================
@@ -55,9 +55,13 @@ def write_csv(
 # =========================================================
 # Fetch data from completed events which are not scrapped and mark them as picked
 # =========================================================
-def get_jobs_configs() -> List[Tuple[int, str, str, str, str]]:
+def get_jobs_configs(
+    scraper_id: str, instance_index: int = 0
+) -> List[Tuple[int, str, str, str, str]]:
 
     hook = get_db_hook()
+
+    jobs_per_instance = SCRAPER_BATCH_SIZE
 
     query = f"""
         UPDATE {METADATA_TABLE} AS m
@@ -66,9 +70,9 @@ def get_jobs_configs() -> List[Tuple[int, str, str, str, str]]:
         FROM (
             SELECT id
             FROM   {METADATA_TABLE}
-            WHERE  is_completed = TRUE
-              AND  is_scrapped  = FALSE
+            WHERE  is_scrapped  = FALSE
               AND  is_picked    = FALSE
+              AND  MOD(id, %s) = %s
             ORDER  BY id
             LIMIT  %s
             FOR UPDATE SKIP LOCKED
@@ -82,13 +86,23 @@ def get_jobs_configs() -> List[Tuple[int, str, str, str, str]]:
             m.agent;
     """
 
-    rows = hook.run(query, (SCRAPER_BATCH_SIZE,), fetch=True)
-
-    if not rows:
-        logger.info("No pending scrape jobs found.")
+    try:
+        rows = hook.run(
+            query,
+            (SCRAPER_INSTANCE_COUNT, instance_index, jobs_per_instance),
+            fetch=True,
+        )
+    except Exception as e:
+        logger.error(f"Query failed for instance {instance_index}: {e}")
         return []
 
-    logger.info(f"Picked {len(rows)} partitions for scraping")
+    if not rows:
+        logger.info(f"No pending scrape jobs found for instance {instance_index}.")
+        return []
+
+    logger.info(
+        f"Instance {instance_index}: Picked {len(rows)} partitions for scraping"
+    )
 
     return [
         (
@@ -136,7 +150,6 @@ def mark_partition_as_scraped_by_id(row_id: int) -> bool:
                picked_at = NULL,
                last_scraped = %s
         WHERE  id = %s
-          AND  is_completed = TRUE
           AND  is_scrapped  = FALSE;
         """,
         parameters=(today, row_id),
@@ -145,10 +158,10 @@ def mark_partition_as_scraped_by_id(row_id: int) -> bool:
     return updated == 1
 
 
-def get_proxies():
+def get_proxies(proxy_user, proxy_password):
     PROXIES = []
     for i in range(1, 6):
-        proxy = f"http://user-{PROXY_USER}-country-US:{PROXY_PSWRD}@dc.oxylabs.io:800{i}"  # specific to oxylabs
+        proxy = f"http://user-{proxy_user}-country-US:{proxy_password}@dc.oxylabs.io:800{i}"  # specific to oxylabs
         PROXIES.append(proxy)
     return PROXIES
 
@@ -167,7 +180,9 @@ async def create_client(proxy_url: str):
     )
 
     # Proper bootstrap — to set cookies
-    await client.get("/")
-    await client.get("/stats")
+    await asyncio.gather(
+        client.get("/"),
+        client.get("/stats"),
+    )
 
     return client

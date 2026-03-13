@@ -1,5 +1,5 @@
 [project]
-name = "vlr-analytics"
+name = "vlr-stats-scrapper-batch"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"

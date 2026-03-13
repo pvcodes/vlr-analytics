@@ -1,5 +1,10 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from utils.vct_logging import logger
 import os
+
 
 # Scraping Configs
 VLR_BASE_URL = "https://www.vlr.gg"
@@ -57,11 +62,28 @@ VLR_MAPS_DICT = {
     "14": "corrode",
 }
 
+
+def fetch_proxies():
+    raw = os.getenv("PROXY_LIST")
+    if not raw:
+        raise ValueError("PROXY_LIST not found")
+
+    raw_list = raw.split(",")
+    proxies = []
+    for x in raw_list:
+        proxy = x.split(":")
+        proxies.append({"user": proxy[0], "password": proxy[1]})
+
+    return proxies
+
+
 METADATA_TABLE = "vlr_events_metadata"
 
-ENVIRONMENT = os.environ.get("ENVIRONMENT", "LOCAL")
-SCRAPER_BATCH_SIZE = int(os.environ.get("SCRAPER_BATCH_SIZE", 1000))
-ASYNCIO_SEMAPHORE_CONCURRENCY = int(os.environ.get("ASYNCIO_SEMAPHORE_CONCURRENCY", 5))
+ENVIRONMENT = os.environ.get("ENVIRONMENT")
+SCRAPER_BATCH_SIZE = int(os.environ.get("SCRAPER_BATCH_SIZE", 10))
+print("SCRAPER_BATCH_SIZE", SCRAPER_BATCH_SIZE)
+SCRAPER_INSTANCE_COUNT = int(os.environ.get("SCRAPER_INSTANCE_COUNT", 1))
+ASYNCIO_SEMAPHORE_CONCURRENCY = int(os.environ.get("ASYNCIO_SEMAPHORE_CONCURRENCY"))
 
 GCS_DATALAKE_BUCKET_NAME = os.environ.get("GCS_DATALAKE_BUCKET_NAME")
 DATASET_PATH = os.environ.get("DATASET_PATH")
@@ -70,22 +92,23 @@ PROXY_USER = os.environ.get("PROXY_USER")
 PROXY_PSWRD = os.environ.get("PROXY_PSWRD")
 
 DB_HOST = os.environ.get("DB_HOST")
-DB_PORT = os.environ.get("DB_PORT", "5432")
+DB_PORT = os.environ.get("DB_PORT")
 DB_NAME = os.environ.get("DB_NAME")
 DB_USER = os.environ.get("DB_USER")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
-POOL_MIN_CONN = int(os.environ.get("DB_POOL_MIN_CONN", 1))
-POOL_MAX_CONN = int(os.environ.get("DB_POOL_MAX_CONN", 1))
+POOL_MIN_CONN = int(os.environ.get("DB_POOL_MIN_CONN"))
+POOL_MAX_CONN = int(os.environ.get("DB_POOL_MAX_CONN"))
 
 # =========================
 # Startup Logging
 # =========================
 logger.info("Starting VLR scraper configuration")
 logger.info(
-    "Environment=%s | BatchSize=%s | Concurrency=%s",
+    "Environment=%s | BatchSize=%s | InstanceCount=%s | Concurrency=%s",
     ENVIRONMENT,
     SCRAPER_BATCH_SIZE,
+    SCRAPER_INSTANCE_COUNT,
     ASYNCIO_SEMAPHORE_CONCURRENCY,
 )
 

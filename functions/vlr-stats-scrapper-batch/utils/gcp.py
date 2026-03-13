@@ -19,7 +19,7 @@ def upload_blob_to_gcs(
     """
 
     try:
-        logger.info(f"[GCS] Uploading {destination_blob_name} to {bucket_name}")
+        logger.info(f"Uploading {destination_blob_name} to {bucket_name}")
 
         client = storage.Client()
         bucket = client.bucket(bucket_name)
@@ -30,10 +30,8 @@ def upload_blob_to_gcs(
             content_type=content_type,
         )
 
-        logger.info(
-            f"[GCS] Upload complete: gs://{bucket_name}/{destination_blob_name}"
-        )
+        logger.info(f"Upload complete: gs://{bucket_name}/{destination_blob_name}")
 
     except Exception:
-        logger.exception(f"[GCS] Failed to upload {destination_blob_name}")
+        logger.exception(f"Failed to upload {destination_blob_name}")
         raise

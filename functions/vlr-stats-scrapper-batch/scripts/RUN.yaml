@@ -60,6 +60,9 @@ spec:
                 - name: SCRAPER_BATCH_SIZE
                   value: "1000"
 
+                - name: SCRAPER_INSTANCE_COUNT
+                  value: "7"
+
                 - name: ASYNCIO_SEMAPHORE_CONCURRENCY
                   value: "12"
 

@@ -1,13 +1,21 @@
 import asyncio
+from utils.constants import fetch_proxies
 
-from dotenv import load_dotenv
 
-load_dotenv()
 from scrapers.scraper import stats_scrapper
+from utils.constants import SCRAPER_INSTANCE_COUNT
+
+
+PROXIES = fetch_proxies()
 
 
 async def main():
-    await stats_scrapper()
+    tasks = [
+        stats_scrapper(proxy["user"], proxy["password"], instance_index=i)
+        for i, proxy in enumerate(PROXIES[:SCRAPER_INSTANCE_COUNT])
+    ]
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

@@ -783,7 +783,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vlr-analytics"
+name = "vlr-stats-scrapper-batch"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
